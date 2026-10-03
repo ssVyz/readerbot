@@ -1,421 +1,285 @@
+"""Minimenu: tiny keyboard-driven menus for the terminal.
+
+Copy this file into a project. It only uses the standard library and works
+on Windows (msvcrt) and on Linux and macOS (termios).
+
+- ``SelectionMenu(items).present()`` returns the index of the chosen item.
+- ``CheckboxMenu(items).present()`` returns the indices of the ticked items.
+- ``select_file()`` browses the file system and returns the chosen ``Path``.
+
+All three return ``None`` when the user quits with ``q``.
+
+Keys: up/down move the cursor, Enter confirms, q quits. In a checkbox menu,
+right ticks the current item and left unticks it. In a selection menu,
+left/right move the cursor like up/down.
 """
-- Copy/paste this file into your repo.
-- Import one of the relevant menu classes: Selection_menu,
 
-"""
-
-
-
-
-
-##########################################
-### Minimenu: tiny CLI menu for python ###
-##########################################
-
-
+import subprocess
 import sys
-import os
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Literal
 
-try:
-    import msvcrt
-    sys_code = "win"
-except:
-    try:
-        import termios
-        import tty
-        sys_code = "lin"
-    except:
-        raise Exception("Can not determine system for input method")
+__all__ = ["CheckboxMenu", "Menu", "SelectionMenu", "select_file"]
+
+Key = Literal["up", "down", "left", "right", "enter", "quit"]
 
 
-### The wrapper class that contains shared methods
+# --- Menus ---
 
 class Menu:
+    """Item list, drawing and key loop shared by the menus. Subclass it."""
 
-    def __init__(self, input_list: list = None, header = None, footer = None, padding: int = 0):
-        self.padding = padding
-        self.display_frame = []
-        self.pointer = 0
-        self.limit = 0
+    def __init__(
+        self,
+        items: Iterable[str] = (),
+        header: str | None = None,
+        footer: str | None = None,
+        padding: int = 0,
+    ) -> None:
         self.header = header
         self.footer = footer
-        self.result = []
-        self.simple_result = None
+        self.padding = padding
+        self._items: list[str] = []
+        self._cursor = 0
+        self.load_list(items)
 
-        if input_list is not None:
-            self.input_list = input_list
-        else:
-            self.input_list = []
+    def add_item(self, item: str) -> None:
+        """Append one item to the end of the menu."""
+        if not isinstance(item, str):
+            raise TypeError(
+                f"menu items must be str, not {type(item).__name__}"
+            )
+        self._items.append(item)
 
-    def add_item(self, new_item: str):
-        if isinstance(new_item, str):
-            self.input_list.append(new_item)
-        else:
-            raise Exception("Tried adding item that is not a string")
-        
-    def load_list(self, new_list: list):
-        if isinstance(new_list, list):
-            self.input_list = new_list
-        else:
-            raise Exception("Tried loading something other than a list")
-    
-    def build_frame(self):
-        pass
-        
-    def show_frame(self):
-        pass
+    def load_list(self, items: Iterable[str]) -> None:
+        """Replace all items. The menu keeps a copy, not your list."""
+        self._items = []
+        for item in items:
+            self.add_item(item)
 
-    def move_pointer(self, key):
-        pass
-
-    def build_result(self):
-        pass
-
-
-    def present(self, simple: bool = False):
-        confirmed_select = False
-        self.limit = len(self.input_list)-1
-
-        while confirmed_select == False:
-
-            self.build_frame()
-            self.show_frame()
-            #print(f"Current pointer: {self.pointer}, current limit: {self.limit}")
-            key = decode_key(get_next_key())
+    def _run(self) -> bool:
+        """Show the menu until Enter (True) or q (False) is pressed."""
+        if not self._items:
+            raise ValueError("menu has no items to show")
+        self._cursor = min(self._cursor, len(self._items) - 1)
+        while True:
+            self._draw()
+            key = _read_key()
             if key == "enter":
-                confirmed_select = True
+                return True
             if key == "quit":
-                return None
-            if key == "select":
-                return "select"
-            else:
-                if key is not None:
-                    self.move_pointer(key)
-        
-        self.build_result()
-        self.simple_result = self.pointer
-        if simple == True:
-            return self.simple_result
-        return self.result
+                return False
+            if key is not None:
+                self._on_key(key)
 
-    def insert_padding(self):
-        for pad in range(self.padding):
-                print("")
+    def _on_key(self, key: Key) -> None:
+        """Move the cursor. Subclasses decide what left/right do."""
+        if key == "up":
+            self._cursor = max(self._cursor - 1, 0)
+        elif key == "down":
+            self._cursor = min(self._cursor + 1, len(self._items) - 1)
 
+    def _label(self, index: int) -> str:
+        """Return the text shown for the item at ``index``."""
+        return self._items[index]
 
-
-### Subclass for the selection menu
-    
-class Selection_menu(Menu):
-
-    def __init__(self, input_list: list = None, header = None, footer = None, padding: int = 0):
-        super().__init__(input_list, header, footer, padding)
-
-    def build_frame(self):
-        self.display_frame = []
-        size_of_list = len(self.input_list)
-        for i in range(0, size_of_list):
-            a = ""
-            if i == self.pointer:
-                a = " --> "
-            else:
-                a = "     "
-            b = self.input_list[i]
-            self.display_frame.append((a, b))
-        
-    def show_frame(self):
-        clear_screen()
-        print("")
+    def _draw(self) -> None:
+        _clear_screen()
+        print()
         if self.header is not None:
             print(self.header)
-            print("")
-        for i in range(0, len(self.display_frame)):
-            self.insert_padding()
-            print(f"{self.display_frame[i][0]} {self.display_frame[i][1]}")
-            
-        print("")
-        self.insert_padding()
+            print()
+        for index in range(len(self._items)):
+            self._print_padding()
+            arrow = " --> " if index == self._cursor else "     "
+            print(f"{arrow} {self._label(index)}")
+        print()
+        self._print_padding()
         if self.footer is not None:
             print(self.footer)
-            print("")
+            print()
 
-    def move_pointer(self, key):
-        upper_bounds = self.limit
-        if key == "up":
-            self.pointer -= 1 if self.pointer > 0 else self.pointer
+    def _print_padding(self) -> None:
+        for _ in range(self.padding):
+            print()
+
+
+class SelectionMenu(Menu):
+    """Pick one item."""
+
+    def present(self) -> int | None:
+        """Show the menu and return the chosen index, or None on quit.
+
+        Raises ValueError if the menu has no items.
+        """
+        return self._cursor if self._run() else None
+
+    def _on_key(self, key: Key) -> None:
         if key == "left":
-            self.pointer -= 1 if self.pointer > 0 else self.pointer
-        if key == "down":
-            self.pointer += 1
-        if key == "right":
-            self.pointer += 1
-        if self.pointer > upper_bounds:
-            self.pointer = upper_bounds
-
-    def build_result(self):
-        result_fields = len(self.input_list)
-        result_list = []
-        for i in range(result_fields):
-            if i == self.pointer:
-                result_list.append(1)
-            else:
-                result_list.append(0)
-        self.result = result_list
-        
-        
-
-class Checkbox_menu(Menu):
-
-    def __init__(self, input_list: list = None, header = None, footer = None, padding: int = 0):
-        super().__init__(input_list, header, footer, padding)
-        self.checked = []
-
-    def update_checked(self, checked_list: list[int]):
-        if len(self.input_list) == len(checked_list):
-            self.checked = checked_list
-        else:
-            raise Exception("tried to set pre-checked list that is not the same length as the input list.")
-
-    def build_frame(self):
-        self.display_frame = []
-        size_of_list = len(self.input_list)
-        if self.checked == []:
-            for _ in range(len(self.input_list)):
-                self.checked.append(0)
-        elif len(self.checked) != len(self.input_list):
-            raise Exception("input list and checked list are not the same length")
-        
-        for i in range(0, size_of_list):
-            a = ""
-            if i == self.pointer:
-                a = " --> "
-            else:
-                a = "     "
-            
-            b = ""
-            if self.checked[i] == 1:
-                b = " [X] "
-            else:
-                b = " [ ] "
-
-            c = ""
-            c = self.input_list[i]
-            self.display_frame.append((a, b, c))
-        
-
-    def show_frame(self):
-        clear_screen()
-        print("")
-        if self.header is not None:
-            print(self.header)
-            print("")
-        for i in range(0, len(self.display_frame)):
-            self.insert_padding()
-            print(f"{self.display_frame[i][0]} {self.display_frame[i][1]} {self.display_frame[i][2]}")
-        print("")
-        self.insert_padding()
-        if self.footer is not None:
-            print(self.footer)
-            print("")
-
-    def move_pointer(self, key):
-        upper_bounds = self.limit
-        if key == "up":
-            self.pointer -= 1 if self.pointer > 0 else self.pointer
-        if key == "left":
-            self.checked[self.pointer] = 0
-        if key == "down":
-            self.pointer += 1
-        if key == "right":
-            self.checked[self.pointer] = 1
-        if self.pointer > upper_bounds:
-            self.pointer = upper_bounds
-
-    def build_result(self):
-        self.result = self.checked
+            key = "up"
+        elif key == "right":
+            key = "down"
+        super()._on_key(key)
 
 
+class CheckboxMenu(Menu):
+    """Tick any number of items. Right ticks an item, left unticks it."""
 
-### Miniexplore block ###
+    _checked: list[bool]
 
-class Work_folder:
+    def add_item(self, item: str) -> None:
+        super().add_item(item)
+        self._checked.append(False)
 
-    def __init__(self, start_folder):
+    def load_list(self, items: Iterable[str]) -> None:
+        """Replace all items and untick everything."""
+        self._checked = []
+        super().load_list(items)
 
-        self.current_dir = Path(start_folder)
-        if self.current_dir.exists() == False:
-            self.current_dir = Path.cwd()
+    def set_checked(self, indices: Iterable[int]) -> None:
+        """Tick exactly the items at ``indices`` and untick the rest."""
+        checked = [False] * len(self._items)
+        for index in indices:
+            if not 0 <= index < len(self._items):
+                raise IndexError(f"no menu item at index {index}")
+            checked[index] = True
+        self._checked = checked
 
-        
-    def select_folder(self):
-        contents_list = []
-        name_list = []
-        for item in self.current_dir.iterdir():
-            contents_list.append(item)
-            name_list.append(item.name)
+    def present(self) -> list[int] | None:
+        """Show the menu and return the ticked indices, or None on quit.
 
-        contents_list.append(self.current_dir.parent)
-        name_list.append("cd ..")
-                    
-        mim = Selection_menu(name_list, f"Current folder: {str(self.current_dir)} \nSelect a folder or file", "Use arrow keys to navigate. Use enter to select a file. Use s-key to select current folder. Use q-key to exit without selecting.")
-        result = mim.present(True)
-
-        if result == None:
+        Raises ValueError if the menu has no items.
+        """
+        if not self._run():
             return None
-        elif result == "select":
-            return "select"
+        return [index for index, ticked in enumerate(self._checked) if ticked]
+
+    def _on_key(self, key: Key) -> None:
+        if key == "right":
+            self._checked[self._cursor] = True
+        elif key == "left":
+            self._checked[self._cursor] = False
         else:
-            selected_item = contents_list[result]
+            super()._on_key(key)
 
-        #print(f"You selected {selected_item}")
-        
-        return selected_item
-        
-
-
-    def go_to_parent(self):
-
-        self.current_dir = self.current_dir.parent
-
-        self.select_folder()
+    def _label(self, index: int) -> str:
+        box = "[X]" if self._checked[index] else "[ ]"
+        return f" {box}  {self._items[index]}"
 
 
+# --- File browser ---
 
-# Miniexplore function
+_SELECT_FOLDER = "[select this folder]"
+_PARENT_FOLDER = "cd .."
+_BROWSER_FOOTER = (
+    "Arrow keys move, Enter opens a folder or picks a file, q quits."
+)
 
-def select_file(starting_folder=(Path.cwd())):
 
-    wf = Work_folder(starting_folder)
-    result_file_path = ""
+def select_file(start_folder: str | Path | None = None) -> Path | None:
+    """Browse the file system and return the chosen file or folder.
 
-    last_item = starting_folder
+    Enter on a folder opens it, Enter on a file picks it, and the
+    "[select this folder]" entry picks the folder being shown. Starts in
+    ``start_folder`` if it is a readable folder, otherwise in the current
+    working directory.
+
+    Returns an absolute ``Path``, or ``None`` if the user quits.
+    """
+    if start_folder is None:
+        folder = Path.cwd()
+    else:
+        folder = Path(start_folder).resolve()
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        folder = Path.cwd()
+        entries = list(folder.iterdir())
+
+    notice = ""
     while True:
+        header = f"Current folder: {folder}\nSelect a file or folder"
+        if notice:
+            header += f"\n\n{notice}"
+        labels = [_SELECT_FOLDER, _PARENT_FOLDER]
+        labels += [entry.name for entry in entries]
+        choice = SelectionMenu(labels, header, _BROWSER_FOOTER).present()
 
-        current_item = wf.select_folder()
-        if current_item == None:
+        if choice is None:
             return None
-        elif current_item == "select":
-            return last_item
-        elif current_item.is_dir() == True:
-            wf.current_dir = current_item
-            last_item = current_item
+        if choice == 0:
+            return folder
+        target = folder.parent if choice == 1 else entries[choice - 2]
+        if not target.is_dir():
+            return target
+        try:
+            entries = list(target.iterdir())
+        except OSError as error:
+            notice = f"Cannot open {target}: {error.strerror}"
         else:
-            return str(current_item)
+            folder, notice = target, ""
 
 
+# --- Keyboard and screen ---
 
+if sys.platform == "win32":
+    import msvcrt
 
+    _ARROWS: dict[bytes, Key] = {
+        b"H": "up", b"P": "down", b"K": "left", b"M": "right",
+    }
+    _KEYS: dict[bytes, Key] = {b"\r": "enter", b"q": "quit"}
 
-
-
-### Keyboard operrations ###
-
-def empty_key_buffer():
-    if sys_code == "win":
-        while msvcrt.kbhit():
+    def _read_key() -> Key | None:
+        """Wait for a keypress and return its name, or None if unmapped."""
+        while msvcrt.kbhit():  # drop keys pressed during the last redraw
             msvcrt.getch()
-    elif sys_code == "lin":
-        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        key = msvcrt.getch()
+        if key in (b"\x00", b"\xe0"):  # prefix byte of arrow/function keys
+            return _ARROWS.get(msvcrt.getch())
+        if key == b"\x03":
+            raise KeyboardInterrupt
+        return _KEYS.get(key)
 
-def get_next_key() -> str:
-    if sys_code == "win":
-        empty_key_buffer()
-        current_key = msvcrt.getch()
-        if current_key == b'\xe0':
-            return msvcrt.getch()
-        return current_key
-    
-    if sys_code == "lin":
-        return get_linux_key()
+else:
+    import termios
+    import tty
 
-    
-def decode_key(key):
-    if sys_code == "win":
-        if key == b'H':
-            return "up"
-        elif key == b'P':
-            return "down"
-        elif key == b'K':
-            return "left"
-        elif key == b'M':
-            return "right"
-        elif key == b'\r':
-            return "enter"
-        elif key == b's':
-            return "select"
-        elif key == b'q':
-            return "quit"
-        else:
-            return None
-        
-    elif sys_code == "lin":
-        return key
+    _ARROWS: dict[str, Key] = {
+        "\x1b[A": "up", "\x1b[B": "down", "\x1b[C": "right", "\x1b[D": "left",
+    }
+    _KEYS: dict[str, Key] = {"\n": "enter", "\r": "enter", "q": "quit"}
+
+    def _read_key() -> Key | None:
+        """Wait for a keypress and return its name, or None if unmapped."""
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            # drop keys pressed during the last redraw
+            termios.tcflush(fd, termios.TCIFLUSH)
+            key = sys.stdin.read(1)
+            if key == "\x1b":
+                return _ARROWS.get(key + sys.stdin.read(2))
+            return _KEYS.get(key)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def get_linux_key():
-    empty_key_buffer()
-
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-
-    tty.setcbreak(fd)
-
-    chars = sys.stdin.read(1)
-    output = None
-    if chars == '\x1b':
-        chars += sys.stdin.read(1)
-        chars += sys.stdin.read(1)
-
-        if chars == '\x1b[A':
-            output = "up"
-        elif chars == '\x1b[B':
-            output = "down"
-        elif chars == '\x1b[C':
-            output = "right"
-        elif chars == '\x1b[D':
-            output = "left"
-    
-    elif chars == '\n' or chars == '\r':
-        output = "enter"
-    elif chars == 's':
-        output = "select"
-    elif chars == 'q':
-        output = "quit"
-
-    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-    return output
+def _clear_screen() -> None:
+    command = "cls" if sys.platform == "win32" else "clear"
+    subprocess.run(command, shell=True, check=False)
 
 
-def clear_screen():
-    if sys_code == "win":
-        os.system("cls")
-    if sys_code == "lin":
-        os.system("clear")
-
-
-
-### Running tests. Not run if called from the outside ###
-
-def main():
-
-
-    print("Running the test suite:")
-    print(f"Detected system: {sys.platform}")
-    
-    '''
-    key = get_next_key()
-    print(key)
-    print(decode_key(key))
-    '''
-
-
+# --- Demo: python minimenu.py ---
 
 if __name__ == "__main__":
-    main()
-
-
-
-
-
+    fruit = ["apple", "banana", "cherry"]
+    footer = "Arrow keys move, Enter confirms, q quits."
+    choice = SelectionMenu(fruit, "Pick a fruit", footer).present()
+    ticked = CheckboxMenu(fruit, "Tick some fruit", footer).present()
+    path = select_file()
+    print(f"SelectionMenu: {choice}")
+    print(f"CheckboxMenu:  {ticked}")
+    print(f"select_file:   {path}")

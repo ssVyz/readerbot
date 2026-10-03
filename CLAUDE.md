@@ -6,15 +6,20 @@ Guidance for Claude Code when working in this repository.
 
 `readerbot` — a Python 3.13 project managed with [uv](https://docs.astral.sh/uv/).
 
-- `main.py` — entry point.
-- `minimenu.py` — vendored, self-contained tiny CLI menu library (`Selection_menu`,
-  `Checkbox_menu`, `Work_folder`, `select_file`). Cross-platform key input via
-  `msvcrt` on Windows and `termios`/`tty` on Linux. It is a copy/paste
-  dependency, not a package — keep it standalone and dependency-free.
+- `main.py` — entry point; currently a one-shot chat completion against the
+  local model.
+- `minimenu.py` — vendored, self-contained tiny CLI menu library
+  (`SelectionMenu`, `CheckboxMenu`, `select_file`; all return `None` when the
+  user quits). Cross-platform key input via `msvcrt` on Windows and
+  `termios`/`tty` on Linux. It is a copy/paste dependency, not a package —
+  keep it standalone and dependency-free. `python minimenu.py` runs a demo.
+- `models/` — local GGUF weights (git-ignored), e.g.
+  `Phi-3-mini-4k-instruct-q4.gguf`.
 - `pyproject.toml` — project metadata; `version` is the single source of truth
   for the repo version.
 
-No dependencies and no test suite yet.
+The only dependency is `llama-cpp-python`, which builds from source on install
+(needs the MSVC C++ toolchain on Windows). No test suite yet.
 
 ## Repo rules
 

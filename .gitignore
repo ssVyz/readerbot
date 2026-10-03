@@ -17,3 +17,5 @@ wheels/
 !CHANGELOG.md
 
 models/
+.mypy_cache/
+.ruff_cache/

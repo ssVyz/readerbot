@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-03
+
+### Changed
+
+- `minimenu` reworked so each menu returns one predictable type, with type
+  hints throughout and PEP 8 names. This breaks the old API:
+  - `Selection_menu` is now `SelectionMenu`; `present()` returns the chosen
+    index (`int`) or `None` on quit, instead of a one-hot list or an index
+    depending on a `simple` flag.
+  - `Checkbox_menu` is now `CheckboxMenu`; `present()` returns the indices
+    of the ticked items (`list[int]`) or `None`. Pre-tick items with
+    `set_checked(indices)`, which replaces `update_checked()` and its list
+    of 0/1 flags.
+  - `select_file()` always returns an absolute `Path` (file or folder) or
+    `None`, instead of a mix of `str`, `Path` and the folder passed in.
+    Picking the current folder is now a `[select this folder]` entry at the
+    top of the list, next to `cd ..`, instead of the `s` key.
+  - `present()` raises `ValueError` for a menu with no items.
+- Running `python minimenu.py` shows a short demo of all three menus.
+
+### Removed
+
+- The `s` key outside the file browser: it used to make every menu return
+  the string `"select"`, which callers had to special-case.
+- `Work_folder`, `decode_key()` and the other key/screen helpers from the
+  public API. Use `select_file()` and the menu classes.
+
+### Fixed
+
+- On Windows, typing a capital H, P, K or M no longer moves the cursor as if
+  an arrow key was pressed, and numpad arrows now work.
+- On Linux, pressing Ctrl+C in a menu no longer leaves the terminal without
+  echo afterwards.
+- On Windows, Ctrl+C in a menu now raises `KeyboardInterrupt` as it does on
+  Linux.
+- The file browser no longer crashes on folders it cannot read, such as
+  `C:\System Volume Information`; it stays put and shows why.
+- `select_file()` starts in the current directory at call time, not the
+  one that was current when `minimenu` was imported. Relative start folders
+  no longer get stuck when going up with `cd ..`.
+- Empty menus fail up front with a clear `ValueError` instead of crashing on
+  the first keypress or returning index `-1`.
+- `CheckboxMenu` no longer changes the list passed to it, and a result
+  returned by `present()` no longer changes if the menu is shown again.
+
 ## [0.0.3] - 2026-10-03
 
 ### Changed
