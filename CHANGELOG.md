@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-03
+
+### Changed
+
+- `uv run main.py` now runs a single chat completion against the local
+  Phi-3 model: it asks for a prompt, prints the model's reply, and exits.
+  This is a quick end-to-end check that the model and runtime work; it
+  expects `models/Phi-3-mini-4k-instruct-q4.gguf` to be present.
+
 ## [0.0.2] - 2026-10-03
 
 ### Added
