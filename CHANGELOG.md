@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-10-03
+
+### Added
+
+- `llama-cpp-python` dependency for running local GGUF models (tested with
+  Phi-3-mini-4k-instruct Q4 on CPU). It has no prebuilt wheel on PyPI, so
+  `uv sync` compiles it from source: this needs a C++ toolchain (on Windows,
+  Visual Studio with the "Desktop development with C++" workload) and takes
+  about 5 minutes the first time. uv caches the built wheel afterwards.
+- `uv.lock` to pin the resolved dependency set.
+
 ## [0.0.1] - 2026-10-03
 
 ### Added
