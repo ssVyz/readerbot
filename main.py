@@ -10,6 +10,7 @@ from pathlib import Path
 
 import config
 import guard
+import ui
 from agent import Agent, Model
 from minimenu import SelectionMenu, select_file
 from workspace import Workspace
@@ -38,6 +39,7 @@ def main() -> None:
         # After the menus: they clear the screen by starting a program,
         # which the guard would block.
         guard.install(allowed_program=pandoc)
+        ui.enable()
 
         print(f"Loading {model_path.name} ...")
         model = Model(model_path)
@@ -81,7 +83,7 @@ def choose_folder() -> Path | None:
 def repl(agent: Agent) -> None:
     while True:
         try:
-            line = input("\n> ").strip()
+            line = ui.read_line("\n> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return
@@ -112,7 +114,7 @@ def repl(agent: Agent) -> None:
                       "dropped from the conversation.")
                 continue
             if answer is not None:
-                print(f"\n{answer}")
+                print("\n" + ui.paint(answer, ui.ANSWER))
 
 
 if __name__ == "__main__":

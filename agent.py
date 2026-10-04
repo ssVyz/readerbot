@@ -17,6 +17,7 @@ from llama_cpp.llama_grammar import LlamaGrammar
 import config
 import prompts
 import tools
+import ui
 from workspace import Workspace
 
 Message = dict[str, str]
@@ -156,13 +157,13 @@ class Agent:
                       "context. Type /reset to start over.")
                 return None
 
-            print(f"  step {step} ...", end="", flush=True)
+            _show(f"  step {step} ...", end="")
             started = time.perf_counter()
             grammar = self._answer_grammar if last_step else self._step_grammar
             raw, cut_off = self.model.complete(prompt, grammar)
             seconds = time.perf_counter() - started
             if cut_off:
-                print(f"\r  step {step} ({seconds:.1f} s): reply too long, "
+                _show(f"\r  step {step} ({seconds:.1f} s): reply too long, "
                       "cut off and ignored")
                 self.messages.append({"role": "user",
                                       "content": prompts.REPLY_CUT_OFF})
@@ -173,20 +174,20 @@ class Agent:
                 # inside strings, which plain JSON does not allow.
                 reply: dict[str, Any] = json.loads(raw, strict=False)
             except json.JSONDecodeError:
-                print(f"\r  step {step} ({seconds:.1f} s): reply was not "
+                _show(f"\r  step {step} ({seconds:.1f} s): reply was not "
                       "valid JSON and was ignored")
                 self.messages.append({"role": "user",
                                       "content": prompts.REPLY_INVALID})
                 continue
             self.messages.append({"role": "assistant", "content": raw})
-            print(f"\r  step {step} ({seconds:.1f} s): {reply['thought']}")
+            _show(f"\r  step {step} ({seconds:.1f} s): {reply['thought']}")
             if "answer" in reply:
                 return str(reply["answer"])
 
             name, args = reply["tool"], reply["args"]
             result = tools.run_tool(self.workspace, name, args)
-            print(f"    -> {name}({_format_args(args)})")
-            print(f"    <- {result.splitlines()[0] if result else ''}")
+            _show(f"    -> {name}({_format_args(args)})")
+            _show(f"    <- {result.splitlines()[0] if result else ''}")
             self.messages.append({"role": "user",
                                   "content": prompts.TOOL_RESULT.format(
                                       name=name, result=result)})
@@ -221,6 +222,11 @@ def _step_schema(answer_only: bool) -> dict[str, Any]:
 
 def _grammar(schema: dict[str, Any]) -> LlamaGrammar:
     return LlamaGrammar.from_json_schema(json.dumps(schema), verbose=False)
+
+
+def _show(text: str, *, end: str = "\n") -> None:
+    """Print a line of the agent's progress in the step colour."""
+    print(ui.paint(text, ui.STEP), end=end, flush=True)
 
 
 def _format_args(args: dict[str, Any]) -> str:

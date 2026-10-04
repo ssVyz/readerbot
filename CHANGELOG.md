@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-04
+
+### Added
+
+- Colours in the console, so the conversation is easy to follow: what you
+  type is cyan, the agent's steps and tool calls are yellow, and its final
+  answer is green. Colours switch off when the output is not a terminal or
+  when the `NO_COLOR` environment variable is set. Change them in `ui.py`.
+
 ## [0.0.5] - 2026-10-04
 
 ### Added

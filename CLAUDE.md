@@ -21,6 +21,7 @@ change. Always follow them; if a task would break one, stop and ask.
 - `workspace.py` — the file boundary (`Workspace.vet`) and the pandoc call.
 - `guard.py` — audit-hook tripwire against network use and stray programs.
 - `config.py` — settings (context size, step limit, output caps).
+- `ui.py` — console colours for user input, agent steps and answers.
 - `minimenu.py` — vendored, self-contained tiny CLI menu library
   (`SelectionMenu`, `CheckboxMenu`, `select_file`; all return `None` when the
   user quits). Cross-platform key input via `msvcrt` on Windows and
