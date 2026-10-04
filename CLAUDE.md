@@ -2,24 +2,39 @@
 
 Guidance for Claude Code when working in this repository.
 
+## Design rules
+
+The design rules are hard boundaries for every design decision and code
+change. Always follow them; if a task would break one, stop and ask.
+
+@design_rules.md
+
 ## Project
 
 `readerbot` — a Python 3.13 project managed with [uv](https://docs.astral.sh/uv/).
 
-- `main.py` — entry point; currently a one-shot chat completion against the
-  local model.
+- `main.py` — entry point: start-up menus (model, then folder) and the REPL.
+- `agent.py` — the model (chat template, output grammar) and the agent loop.
+- `tools.py` — every tool the agent can use; its `TOOLS` registry is the
+  complete list.
+- `prompts.py` — all other model-facing text.
+- `workspace.py` — the file boundary (`Workspace.vet`) and the pandoc call.
+- `guard.py` — audit-hook tripwire against network use and stray programs.
+- `config.py` — settings (context size, step limit, output caps).
 - `minimenu.py` — vendored, self-contained tiny CLI menu library
   (`SelectionMenu`, `CheckboxMenu`, `select_file`; all return `None` when the
   user quits). Cross-platform key input via `msvcrt` on Windows and
   `termios`/`tty` on Linux. It is a copy/paste dependency, not a package —
   keep it standalone and dependency-free. `python minimenu.py` runs a demo.
 - `models/` — local GGUF weights (git-ignored), e.g.
-  `Phi-3-mini-4k-instruct-q4.gguf`.
+  `Qwen3-4B-Q4_K_M.gguf`, `Phi-3-mini-4k-instruct-q4.gguf`.
+- `examples/` — sample documents for testing (git-ignored).
 - `pyproject.toml` — project metadata; `version` is the single source of truth
   for the repo version.
 
 The only dependency is `llama-cpp-python`, which builds from source on install
-(needs the MSVC C++ toolchain on Windows). No test suite yet.
+(needs the MSVC C++ toolchain on Windows). pandoc must be on `PATH` to convert
+`.docx` files. No test suite yet.
 
 ## Repo rules
 
@@ -54,11 +69,8 @@ The repo version lives in `pyproject.toml` under `[project] version`.
   `git merge`, `git rebase`, `git tag`, or anything else that writes to history
   or a remote — not even when the work is finished and obviously commit-ready.
 - Read-only git commands (`status`, `diff`, `log`, `show`) are fine.
-- Leave finished work in the working tree and say what is ready to commit.
+- Do not change .gitignore, this is done by humans.
 
 ## Conventions
 
-- Keep `*.md` out of git unless it is explicitly un-ignored in `.gitignore` —
-  the repo ignores markdown by default (`README.md`, `CHANGELOG.md`, and
-  `CLAUDE.md` are the current exceptions).
 - Run the app with `uv run main.py`.

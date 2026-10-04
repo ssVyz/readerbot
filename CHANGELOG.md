@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-04
+
+### Added
+
+- readerbot is now an agent you talk to. `uv run main.py` asks which model
+  to load (any `.gguf` in `models/`) and which folder to work in, then
+  answers questions about the documents there in a REPL. Commands: `/help`,
+  `/tools`, `/prompt` (the system prompt as the model gets it), `/reset`,
+  `/quit`; Ctrl+C stops a running answer.
+- The agent's tools, all in `tools.py`:
+  - `list_files`: the `.docx` and `.md` files in the folder.
+  - `convert_docx`: turns a `.docx` into a `.md` of the same name with
+    pandoc, and lists its headings. It never overwrites an existing `.md`
+    and says when that file is older than the `.docx`.
+  - `read_md`: a numbered line range, capped at about 6000 characters.
+  - `search_md`: the lines that contain all of the given words, in any
+    order (not case-sensitive), with snippets.
+  - `create_md`: a new `.md` file; it never overwrites.
+  - `append_md`: adds text to the end of a `.md` file.
+  - `edit_md`: replaces one exact passage in a `.md` file.
+- Every file access is vetted before it happens. The agent only sees
+  `.docx` and `.md` files directly in the chosen folder, can only write
+  `.md` files, and is refused paths, links, reserved Windows names and
+  anything outside the folder. Written files may not load images from the
+  web, which a Markdown preview could use to leak document text.
+- A tripwire (`guard.py`) stops the program if anything tries to use the
+  network or start a program other than pandoc.
+- The model's replies are forced into a fixed JSON format, so it can only
+  call the tools above, with well-formed arguments. This works with any
+  model that has a chat template. Tested with Qwen3-4B and Phi-3-mini.
+  Phi-3's template has no system role, so the instructions are put in
+  front of the first question instead.
+
+### Changed
+
+- `main.py` no longer runs a one-shot test completion; it starts the REPL.
+
 ## [0.0.4] - 2026-10-03
 
 ### Changed
