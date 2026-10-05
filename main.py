@@ -73,11 +73,8 @@ def choose_model() -> Path | None:
 
 
 def choose_folder() -> Path | None:
-    """Ask for the folder; picking a file means the folder it is in."""
-    path = select_file()
-    if path is None:
-        return None
-    return path if path.is_dir() else path.parent
+    """Ask for the folder; only folders are listed, not files."""
+    return select_file(folders_only=True)
 
 
 def repl(agent: Agent) -> None:

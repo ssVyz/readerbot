@@ -5,7 +5,8 @@ on Windows (msvcrt) and on Linux and macOS (termios).
 
 - ``SelectionMenu(items).present()`` returns the index of the chosen item.
 - ``CheckboxMenu(items).present()`` returns the indices of the ticked items.
-- ``select_file()`` browses the file system and returns the chosen ``Path``.
+- ``select_file()`` browses the file system and returns the chosen ``Path``;
+  ``select_file(folders_only=True)`` lists folders only.
 
 All three return ``None`` when the user quits with ``q``.
 
@@ -175,15 +176,19 @@ _PARENT_FOLDER = "cd .."
 _BROWSER_FOOTER = (
     "Arrow keys move, Enter opens a folder or picks a file, q quits."
 )
+_FOLDER_BROWSER_FOOTER = "Arrow keys move, Enter opens a folder, q quits."
 
 
-def select_file(start_folder: str | Path | None = None) -> Path | None:
+def select_file(
+    start_folder: str | Path | None = None, *, folders_only: bool = False
+) -> Path | None:
     """Browse the file system and return the chosen file or folder.
 
     Enter on a folder opens it, Enter on a file picks it, and the
-    "[select this folder]" entry picks the folder being shown. Starts in
-    ``start_folder`` if it is a readable folder, otherwise in the current
-    working directory.
+    "[select this folder]" entry picks the folder being shown. With
+    ``folders_only``, files are not listed, so only a folder can be picked.
+    Starts in ``start_folder`` if it is a readable folder, otherwise in the
+    current working directory.
 
     Returns an absolute ``Path``, or ``None`` if the user quits.
     """
@@ -192,33 +197,45 @@ def select_file(start_folder: str | Path | None = None) -> Path | None:
     else:
         folder = Path(start_folder).resolve()
     try:
-        entries = list(folder.iterdir())
+        entries = _list_folder(folder, folders_only)
     except OSError:
         folder = Path.cwd()
-        entries = list(folder.iterdir())
+        entries = _list_folder(folder, folders_only)
 
+    if folders_only:
+        prompt, footer = "Select a folder", _FOLDER_BROWSER_FOOTER
+    else:
+        prompt, footer = "Select a file or folder", _BROWSER_FOOTER
     notice = ""
     while True:
-        header = f"Current folder: {folder}\nSelect a file or folder"
+        header = f"Current folder: {folder}\n{prompt}"
         if notice:
             header += f"\n\n{notice}"
         labels = [_SELECT_FOLDER, _PARENT_FOLDER]
         labels += [entry.name for entry in entries]
-        choice = SelectionMenu(labels, header, _BROWSER_FOOTER).present()
+        choice = SelectionMenu(labels, header, footer).present()
 
         if choice is None:
             return None
         if choice == 0:
             return folder
         target = folder.parent if choice == 1 else entries[choice - 2]
-        if not target.is_dir():
+        if not folders_only and not target.is_dir():
             return target
         try:
-            entries = list(target.iterdir())
+            entries = _list_folder(target, folders_only)
         except OSError as error:
             notice = f"Cannot open {target}: {error.strerror}"
         else:
             folder, notice = target, ""
+
+
+def _list_folder(folder: Path, folders_only: bool) -> list[Path]:
+    """Return the entries of ``folder``; raises OSError if it is unreadable."""
+    entries = list(folder.iterdir())
+    if folders_only:
+        entries = [entry for entry in entries if entry.is_dir()]
+    return entries
 
 
 # --- Keyboard and screen ---

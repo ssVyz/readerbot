@@ -37,6 +37,9 @@ _REMOTE_IMAGE = re.compile(
     r"!\[[^\]]*\]\(\s*<?\s*(?:[a-z][a-z0-9+.-]*:)?//|<img\b", re.IGNORECASE
 )
 
+# A Markdown heading as pandoc writes it: one to six "#", then a space.
+_HEADING = re.compile(r"(#{1,6})(?:\s|$)")
+
 
 def _read_text(path: Path) -> str:
     try:
@@ -51,6 +54,11 @@ def _split_lines(text: str) -> list[str]:
     if lines[-1] == "":
         lines.pop()
     return lines
+
+
+def _char_count(lines: list[str], start: int, end: int) -> int:
+    """Characters in lines start to end (counting from 1), with newlines."""
+    return sum(len(line) + 1 for line in lines[start - 1:end])
 
 
 def _check_new_text(text: str) -> None:
@@ -136,7 +144,7 @@ def convert_docx(workspace: Workspace, file: str) -> str:
             stale = (" It is older than the .docx and may be out of date; "
                      "tell the user.")
         return (f"{target.name} already exists, so nothing was converted. "
-                f"Read it with read_md.{stale}")
+                f"See its sections with outline_md.{stale}")
     workspace.convert_docx(source, target)
     lines = _split_lines(_read_text(target))
     headings = [f"  line {number}: {line}"
@@ -149,15 +157,79 @@ def convert_docx(workspace: Workspace, file: str) -> str:
             f"Headings:\n{shown}{more}")
 
 
+# === TOOL: outline_md ======================================================
+# Access: reads one .md file.
+
+OUTLINE_MD_DESCRIPTION = (  # MODEL-FACING
+    "Show the outline of a .md file: its headings, each with the line range "
+    "and size in characters of its section (a section includes its "
+    "subsections). Call this before reading a file, then read only the "
+    "sections you need with read_md. "
+    'Example args: {"file": "Report.md"}'
+)
+OUTLINE_MD_ARGS = _object_schema(file="string")  # MODEL-FACING
+
+
+def outline_md(workspace: Workspace, file: str) -> str:
+    path = workspace.vet(file, (".md",), exists=True)
+    lines = _split_lines(_read_text(path))
+    total = len(lines)
+    if total == 0:
+        return f"{path.name} is empty."
+    headings = [(number, len(match.group(1)), line)
+                for number, line in enumerate(lines, start=1)
+                if (match := _HEADING.match(line))]
+    count_text = ("1 heading" if len(headings) == 1
+                  else f"{len(headings)} headings")
+    header = (f"Outline of {path.name}: {total} lines, "
+              f"{_char_count(lines, 1, total)} characters, {count_text}.")
+    if not headings:
+        return header + "\nFind the parts you need with search_md."
+
+    # Too many headings: leave out the deepest levels until the rest fit.
+    cap = config.OUTLINE_MAX_HEADINGS
+    depth = max(level for _, level, _ in headings)
+    while depth > 1 and sum(level <= depth for _, level, _ in headings) > cap:
+        depth -= 1
+    shown = [index for index, (_, level, _) in enumerate(headings)
+             if level <= depth]
+
+    rows = []
+    first = headings[0][0]
+    if any(line.strip() for line in lines[:first - 1]):
+        rows.append(f"  lines 1-{first - 1} "
+                    f"({_char_count(lines, 1, first - 1)} characters): "
+                    "text before the first heading")
+    width = config.SNIPPET_CHARS
+    for index in shown[:cap]:
+        start, level, line = headings[index]
+        # A section ends before the next heading of the same or a higher level.
+        end = next((number - 1 for number, other, _ in headings[index + 1:]
+                    if other <= level), total)
+        title = line[:width] + "..." if len(line) > width else line
+        rows.append(f"  lines {start}-{end} "
+                    f"({_char_count(lines, start, end)} characters): {title}")
+    notes = ""
+    if depth < max(level for _, level, _ in headings):
+        notes += (f"\n[Only headings down to {'#' * depth} are listed, to "
+                  "keep this short. read_md shows the subheadings.]")
+    if len(shown) > cap:
+        rest = headings[shown[cap]][0]
+        notes += (f"\n[Stopped after {cap} headings. The rest starts at line "
+                  f"{rest}; find parts there with search_md.]")
+    return header + "\n" + "\n".join(rows) + notes
+
+
 # === TOOL: read_md =========================================================
 # Access: reads one .md file.
 
 READ_MD_DESCRIPTION = (  # MODEL-FACING
     "Read lines start_line to end_line (inclusive, counting from 1) of a .md "
     "file. Each line comes with its number. At most about "
-    f"{config.READ_MAX_CHARS} characters are returned per call, so read long "
-    "files in parts. "
-    'Example args: {"file": "Report.md", "start_line": 1, "end_line": 40}'
+    f"{config.READ_MAX_CHARS} characters are returned per call. Take the "
+    "line range of the section you need from outline_md; do not read a long "
+    "file from the start. "
+    'Example args: {"file": "Report.md", "start_line": 120, "end_line": 185}'
 )
 READ_MD_ARGS = _object_schema(  # MODEL-FACING
     file="string", start_line="integer", end_line="integer"
@@ -342,6 +414,7 @@ TOOLS = [
     Tool("list_files", LIST_FILES_DESCRIPTION, LIST_FILES_ARGS, list_files),
     Tool("convert_docx", CONVERT_DOCX_DESCRIPTION, CONVERT_DOCX_ARGS,
          convert_docx),
+    Tool("outline_md", OUTLINE_MD_DESCRIPTION, OUTLINE_MD_ARGS, outline_md),
     Tool("read_md", READ_MD_DESCRIPTION, READ_MD_ARGS, read_md),
     Tool("search_md", SEARCH_MD_DESCRIPTION, SEARCH_MD_ARGS, search_md),
     Tool("create_md", CREATE_MD_DESCRIPTION, CREATE_MD_ARGS, create_md),

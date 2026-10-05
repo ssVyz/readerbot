@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-10-05
+
+### Changed
+
+- Choosing the work folder at start-up now lists only folders, not files,
+  so it is easier to find your way around. Pick a folder with
+  "[select this folder]". `minimenu.select_file` has a new
+  `folders_only` option for this; without it, it works as before.
+
+## [0.0.7] - 2026-10-05
+
+### Added
+
+- New tool `outline_md`: shows a `.md` file's headings, each with the line
+  range and size (in characters) of its section. The agent now gets a map
+  of a long manuscript first and reads only the sections it needs, instead
+  of working through the file from line 1 and using up its steps and
+  context. For very long outlines it leaves out the deepest heading levels
+  (at most 50 headings, set in `config.py`).
+
+### Changed
+
+- The system prompt and the `read_md` description now tell the agent to
+  call `outline_md` before reading and not to read a long file from the
+  start. The `read_md` example no longer suggests reading lines 1-40, which
+  models tended to copy.
+- `convert_docx` now points the agent to `outline_md` when the `.md` file
+  already exists. Before, it only said to read the file, so after the first
+  session the agent had no headings to go by.
+- Context doubled to 32768 tokens, so a question has room for about twice as
+  many reads before the conversation is full.
+- At most 8000 characters per `create_md`/`append_md`/`edit_md` call (was
+  20000). One model reply is capped at 2048 tokens, so longer text could
+  never arrive in a single call anyway.
+
 ## [0.0.6] - 2026-10-04
 
 ### Added
