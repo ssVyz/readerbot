@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-10-06
+
+### Added
+
+- `/ls` lists the files in the work folder: first exactly what the agent's
+  `list_files` tool reports (with sizes, line counts and which `.docx`
+  files are converted), then any other files, marked as invisible to the
+  agent. The model does not see this listing.
+- `/verbose <question>` asks a question as usual, but prints every tool
+  result in full, exactly as the model gets it, instead of only its first
+  line. Useful to see why the agent reads what it reads.
+
 ## [0.0.8] - 2026-10-05
 
 ### Changed

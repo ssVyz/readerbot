@@ -128,8 +128,11 @@ class Agent:
         """Forget the conversation."""
         self.messages = [{"role": "system", "content": self.system_prompt}]
 
-    def ask(self, question: str) -> str | None:
+    def ask(self, question: str, *, verbose: bool = False) -> str | None:
         """Run one turn, printing each step. Returns the answer, or None.
+
+        With ``verbose``, each tool result is printed in full, exactly as
+        the model gets it, instead of only its first line.
 
         If the turn is interrupted (Ctrl+C) or fails, the conversation goes
         back to where it was before the question. Files already written
@@ -137,12 +140,12 @@ class Agent:
         """
         start = len(self.messages)
         try:
-            return self._turn(question)
+            return self._turn(question, verbose)
         except BaseException:
             del self.messages[start:]
             raise
 
-    def _turn(self, question: str) -> str | None:
+    def _turn(self, question: str, verbose: bool) -> str | None:
         self.messages.append({"role": "user", "content": question})
         for step in range(1, config.MAX_STEPS + 1):
             last_step = step == config.MAX_STEPS
@@ -186,11 +189,13 @@ class Agent:
 
             name, args = reply["tool"], reply["args"]
             result = tools.run_tool(self.workspace, name, args)
+            message = prompts.TOOL_RESULT.format(name=name, result=result)
             _show(f"    -> {name}({_format_args(args)})")
-            _show(f"    <- {result.splitlines()[0] if result else ''}")
-            self.messages.append({"role": "user",
-                                  "content": prompts.TOOL_RESULT.format(
-                                      name=name, result=result)})
+            if verbose:
+                print(message, flush=True)
+            else:
+                _show(f"    <- {result.splitlines()[0] if result else ''}")
+            self.messages.append({"role": "user", "content": message})
         print("  Stopped: the model did not answer within the step limit.")
         return None
 

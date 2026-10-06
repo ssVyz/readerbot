@@ -10,6 +10,7 @@ from pathlib import Path
 
 import config
 import guard
+import tools
 import ui
 from agent import Agent, Model
 from minimenu import SelectionMenu, select_file
@@ -17,10 +18,13 @@ from workspace import Workspace
 
 HELP = """\
 Commands:
-  /tools   list the tools the model can use
-  /prompt  show the system prompt the model gets
-  /reset   forget the conversation (files are not touched)
-  /quit    leave readerbot
+  /ls              list the files in the folder
+  /verbose <text>  ask as usual, and show every tool result in full,
+                   exactly as the model gets it
+  /tools           list the tools the model can use
+  /prompt          show the system prompt the model gets
+  /reset           forget the conversation (files are not touched)
+  /quit            leave readerbot
 Anything else is sent to the model. Ctrl+C stops a running answer."""
 
 
@@ -90,6 +94,8 @@ def repl(agent: Agent) -> None:
             return
         if line == "/help":
             print(HELP)
+        elif line == "/ls":
+            print(list_folder(agent.workspace))
         elif line == "/tools":
             print(agent.tool_list)
         elif line == "/prompt":
@@ -97,21 +103,50 @@ def repl(agent: Agent) -> None:
         elif line == "/reset":
             agent.reset()
             print("The conversation was cleared.")
+        elif line == "/verbose" or line.startswith("/verbose "):
+            question = line.removeprefix("/verbose").strip()
+            if question:
+                ask(agent, question, verbose=True)
+            else:
+                print("Type the question after /verbose, for example: "
+                      "/verbose What is chapter 2 about?")
         elif line.startswith("/"):
             print(f"Unknown command {line}. Type /help for the commands.")
         else:
-            try:
-                answer = agent.ask(line)
-            except KeyboardInterrupt:
-                print("\nStopped. The question was dropped from the "
-                      "conversation; files already written stay.")
-                continue
-            except Exception as error:  # a bug must not end the session
-                print(f"\nInternal error: {error!r}. The question was "
-                      "dropped from the conversation.")
-                continue
-            if answer is not None:
-                print("\n" + ui.paint(answer, ui.ANSWER))
+            ask(agent, line)
+
+
+def ask(agent: Agent, question: str, *, verbose: bool = False) -> None:
+    """Send one question to the agent and print its answer."""
+    try:
+        answer = agent.ask(question, verbose=verbose)
+    except KeyboardInterrupt:
+        print("\nStopped. The question was dropped from the "
+              "conversation; files already written stay.")
+        return
+    except Exception as error:  # a bug must not end the session
+        print(f"\nInternal error: {error!r}. The question was "
+              "dropped from the conversation.")
+        return
+    if answer is not None:
+        print("\n" + ui.paint(answer, ui.ANSWER))
+
+
+def list_folder(workspace: Workspace) -> str:
+    """For /ls: the files as the agent's list_files shows them, then the
+    other files in the folder, which the agent cannot see."""
+    listing = tools.run_tool(workspace, "list_files", {})
+    try:
+        visible = {path.name for path in workspace.files()}
+        others = sorted((entry.name for entry in workspace.folder.iterdir()
+                         if entry.is_file() and entry.name not in visible),
+                        key=str.lower)
+    except OSError:
+        return listing
+    if others:
+        listing += ("\nOther files (the agent cannot see these):\n"
+                    + "\n".join(others))
+    return listing
 
 
 if __name__ == "__main__":
