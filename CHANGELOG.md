@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-10-06
+
+### Added
+
+- `outline_md` now also works for documents whose titles are formatted by
+  hand instead of with Word's heading styles, which is common in
+  manuscripts. pandoc only turns heading styles into Markdown headings, so
+  such a document used to have no outline at all, and the agent fell back
+  to searching and reading from the start. When a file has no Markdown
+  headings, `outline_md` now lists the short lines that look like titles:
+  lines in bold from start to end, and lines that start with a section
+  number like 2.1 or 2.1.3 (level from the number: 2.1 is level 2). It says
+  that these are guesses. Single numbers like "2." do not count, because
+  numbered lists and hand-numbered references look like that.
+
+### Changed
+
+- `convert_docx` now returns the new file's outline, the same as
+  `outline_md`, instead of its own list of headings. Before, a document
+  without heading styles got "Headings: (none)", which led the agent to
+  skip the outline altogether.
+
 ## [0.0.10] - 2026-10-06
 
 ### Added

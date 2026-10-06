@@ -40,6 +40,18 @@ _REMOTE_IMAGE = re.compile(
 # A Markdown heading as pandoc writes it: one to six "#", then a space.
 _HEADING = re.compile(r"(#{1,6})(?:\s|$)")
 
+# Fallback for files without Markdown headings, such as a .docx whose titles
+# are formatted by hand instead of with Word's heading styles. A line of at
+# most _GUESSED_MAX_CHARS counts as a heading if it
+# - is bold from start to end, like "**Results**", or
+# - starts with a section number like "2.1" or "2.1.3", then a word.
+# A single number like "2." is not enough: pandoc writes list items and
+# hand-numbered references that way.
+_BOLD_LINE = re.compile(r"\*\*([^*]+)\*\*")
+_NUMBERED_LINE = re.compile(r"\d+(?:\.\d+)+\.?\s+[^\W\d_].*")
+_SECTION_NUMBER = re.compile(r"\d+(?:\.\d+)*")
+_GUESSED_MAX_CHARS = 150
+
 
 def _read_text(path: Path) -> str:
     try:
@@ -128,7 +140,7 @@ def list_files(workspace: Workspace) -> str:
 CONVERT_DOCX_DESCRIPTION = (  # MODEL-FACING
     "Convert a .docx file to Markdown so that it can be read. Creates a .md "
     "file with the same name in the folder; the .docx is not changed. "
-    "Returns the new file's length and headings. "
+    "Returns the new file's outline, like outline_md. "
     'Example args: {"file": "Report.docx"}'
 )
 CONVERT_DOCX_ARGS = _object_schema(file="string")  # MODEL-FACING
@@ -147,14 +159,7 @@ def convert_docx(workspace: Workspace, file: str) -> str:
                 f"See its sections with outline_md.{stale}")
     workspace.convert_docx(source, target)
     lines = _split_lines(_read_text(target))
-    headings = [f"  line {number}: {line}"
-                for number, line in enumerate(lines, start=1)
-                if line.startswith("#")]
-    shown = "\n".join(headings[:30]) or "  (none)"
-    more = (f"\n  ... and {len(headings) - 30} more"
-            if len(headings) > 30 else "")
-    return (f"Created {target.name} ({len(lines)} lines).\n"
-            f"Headings:\n{shown}{more}")
+    return f"Created {target.name}.\n" + _outline(target.name, lines)
 
 
 # === TOOL: outline_md ======================================================
@@ -163,8 +168,9 @@ def convert_docx(workspace: Workspace, file: str) -> str:
 OUTLINE_MD_DESCRIPTION = (  # MODEL-FACING
     "Show the outline of a .md file: its headings, each with the line range "
     "and size in characters of its section (a section includes its "
-    "subsections). Call this before reading a file, then read only the "
-    "sections you need with read_md. "
+    "subsections). Without Markdown headings, it lists the lines that look "
+    "like headings instead. Call this before reading a file, then read only "
+    "the sections you need with read_md. "
     'Example args: {"file": "Report.md"}'
 )
 OUTLINE_MD_ARGS = _object_schema(file="string")  # MODEL-FACING
@@ -172,16 +178,19 @@ OUTLINE_MD_ARGS = _object_schema(file="string")  # MODEL-FACING
 
 def outline_md(workspace: Workspace, file: str) -> str:
     path = workspace.vet(file, (".md",), exists=True)
-    lines = _split_lines(_read_text(path))
+    return _outline(path.name, _split_lines(_read_text(path)))
+
+
+def _outline(name: str, lines: list[str]) -> str:
+    """The outline_md result for a file; convert_docx returns it too."""
     total = len(lines)
     if total == 0:
-        return f"{path.name} is empty."
-    headings = [(number, len(match.group(1)), line)
-                for number, line in enumerate(lines, start=1)
-                if (match := _HEADING.match(line))]
-    count_text = ("1 heading" if len(headings) == 1
-                  else f"{len(headings)} headings")
-    header = (f"Outline of {path.name}: {total} lines, "
+        return f"{name} is empty."
+    headings, guessed = _find_headings(lines)
+    kind = "guessed heading" if guessed and headings else "heading"
+    count_text = (f"1 {kind}" if len(headings) == 1
+                  else f"{len(headings)} {kind}s")
+    header = (f"Outline of {name}: {total} lines, "
               f"{_char_count(lines, 1, total)} characters, {count_text}.")
     if not headings:
         return header + "\nFind the parts you need with search_md."
@@ -210,14 +219,42 @@ def outline_md(workspace: Workspace, file: str) -> str:
         rows.append(f"  lines {start}-{end} "
                     f"({_char_count(lines, start, end)} characters): {title}")
     notes = ""
+    if guessed:
+        notes += ("\n[The file has no Markdown headings, so these were "
+                  "guessed: lines in bold from start to end, and lines that "
+                  "start with a section number like 2.1. Some may not be "
+                  "real headings.]")
     if depth < max(level for _, level, _ in headings):
-        notes += (f"\n[Only headings down to {'#' * depth} are listed, to "
+        notes += (f"\n[Only headings down to level {depth} are listed, to "
                   "keep this short. read_md shows the subheadings.]")
     if len(shown) > cap:
         rest = headings[shown[cap]][0]
         notes += (f"\n[Stopped after {cap} headings. The rest starts at line "
                   f"{rest}; find parts there with search_md.]")
     return header + "\n" + "\n".join(rows) + notes
+
+
+def _find_headings(
+    lines: list[str],
+) -> tuple[list[tuple[int, int, str]], bool]:
+    """Return (line number, level, line) for each heading, and whether they
+    were guessed with the fallback rules at the top of this file."""
+    headings = [(number, len(match.group(1)), line)
+                for number, line in enumerate(lines, start=1)
+                if (match := _HEADING.match(line))]
+    if headings:
+        return headings, False
+    for number, line in enumerate(lines, start=1):
+        if len(line) > _GUESSED_MAX_CHARS:
+            continue
+        bold = _BOLD_LINE.fullmatch(line)
+        if bold or _NUMBERED_LINE.fullmatch(line):
+            # The level is the depth of the section number (2.1 is level 2);
+            # a heading without a number is level 1.
+            section = _SECTION_NUMBER.match(bold.group(1) if bold else line)
+            level = section.group().count(".") + 1 if section else 1
+            headings.append((number, level, line))
+    return headings, True
 
 
 # === TOOL: read_md =========================================================
