@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-10-06
+
+### Changed
+
+- `search_md` now finds lines with any of the given words, not only lines
+  with all of them. Models tend to search for several related words at
+  once (like "agentic programming automation AI"); when no line had all of
+  them, the result was "no lines", and the agent concluded that the
+  manuscript did not mention the topic at all, even though "agentic" was in
+  it twice. Now lines with more of the words come first, then lines with
+  rarer words, and partial hits say which words they contain. With several
+  words, the result also says how many lines contain each word, so a word
+  that is not in the file at all is plain to see. A search for one word
+  works as before.
+
 ## [0.0.12] - 2026-10-06
 
 ### Added

@@ -401,10 +401,11 @@ def read_md(workspace: Workspace, file: str, start_line: int,
 # Access: reads one .md file.
 
 SEARCH_MD_DESCRIPTION = (  # MODEL-FACING
-    "Find the lines of a .md file that contain all of the given words, in "
-    "any order (plain text, not case-sensitive, no wildcards). Use one or "
-    "two key words. Returns the line numbers with a snippet of each line, "
-    f"at most {config.SEARCH_MAX_HITS} lines. "
+    "Find the lines of a .md file that contain any of the given words "
+    "(plain text, not case-sensitive, no wildcards). Lines with more of the "
+    "words come first, and it says how many lines contain each word. "
+    "Use one to three key words. Returns the line numbers with a snippet of "
+    f"each line, at most {config.SEARCH_MAX_HITS} lines. "
     'Example args: {"file": "Report.md", "words": "climate"}'
 )
 SEARCH_MD_ARGS = _object_schema(  # MODEL-FACING
@@ -416,32 +417,56 @@ def search_md(workspace: Workspace, file: str, words: str) -> str:
     path = workspace.vet(file, (".md",), exists=True)
     if len(words) > 200:
         raise RefusedError("words are limited to 200 characters")
-    needles = words.lower().split()
+    needles = list(dict.fromkeys(words.lower().split()))  # without repeats
     if not needles:
         raise RefusedError("words must not be empty")
-    wanted = " and ".join(repr(needle) for needle in needles)
-    hits = [(number, line)
-            for number, line in enumerate(
-                _split_lines(_read_text(path)), start=1)
-            if all(needle in line.lower() for needle in needles)]
+    wanted = " or ".join(repr(needle) for needle in needles)
+    # Each hit: (line number, line, the words it contains).
+    hits = []
+    for number, line in enumerate(_split_lines(_read_text(path)), start=1):
+        found = [needle for needle in needles if needle in line.lower()]
+        if found:
+            hits.append((number, line, found))
     if not hits:
         return f"No lines in {path.name} contain {wanted}."
+    counts = {needle: sum(needle in found for _, _, found in hits)
+              for needle in needles}
+    # Lines with more of the words first, then lines with a rarer word (a
+    # word in few lines is a better lead), then in file order.
+    hits.sort(key=lambda hit: (-len(hit[2]),
+                               min(counts[word] for word in hit[2]), hit[0]))
 
     width = config.SNIPPET_CHARS
     rows = []
-    for number, line in hits[:config.SEARCH_MAX_HITS]:
-        first = min(line.lower().index(needle) for needle in needles)
+    for number, line, found in hits[:config.SEARCH_MAX_HITS]:
+        # The snippet shows the rarest of the line's words, the best lead.
+        first = line.lower().index(min(found, key=counts.__getitem__))
         begin = max(0, first - width // 3)
         snippet = line[begin:begin + width]
         if begin > 0:
             snippet = "..." + snippet
         if begin + width < len(line):
             snippet += "..."
-        rows.append(f"{number:>5} | {snippet}")
-    shown = (f", showing the first {config.SEARCH_MAX_HITS}"
-             if len(hits) > config.SEARCH_MAX_HITS else "")
-    return (f"{len(hits)} lines in {path.name} contain {wanted}{shown}:\n"
-            + "\n".join(rows))
+        partial = ("" if len(found) == len(needles) else
+                   f"[only {', '.join(repr(word) for word in found)}] ")
+        rows.append(f"{number:>5} | {partial}{snippet}")
+    shown = ""
+    if len(hits) > config.SEARCH_MAX_HITS:
+        shown = (f", showing the first {config.SEARCH_MAX_HITS}"
+                 if len(needles) == 1 else
+                 f", showing the best {config.SEARCH_MAX_HITS}")
+    count_text = ("1 line" if len(hits) == 1 else f"{len(hits)} lines")
+    verb = "contains" if len(hits) == 1 else "contain"
+    header = f"{count_text} in {path.name} {verb} {wanted}{shown}:"
+    if len(needles) > 1:
+        both = "both" if len(needles) == 2 else f"all {len(needles)}"
+        complete = sum(len(found) == len(needles) for _, _, found in hits)
+        header += ("\nLines per word: "
+                   + ", ".join(f"{needle!r} {count}"
+                               for needle, count in counts.items())
+                   + f"; with {both} words: {complete}. Lines with more of "
+                   "the words come first, then lines with rarer words.")
+    return header + "\n" + "\n".join(rows)
 
 
 # === TOOL: create_md =======================================================
