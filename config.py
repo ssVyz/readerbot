@@ -8,7 +8,7 @@ MODELS_DIR = Path(__file__).parent / "models"
 
 CONTEXT_TOKENS = 32768  # context to allocate; capped at the model's training
 STEP_MAX_TOKENS = 2048  # longest single model reply (it may carry a file)
-MAX_STEPS = 12  # model replies per question; the last one must be an answer
+MAX_STEPS = 15  # model replies per question; the last one must be an answer
 TEMPERATURE = 0.2
 
 # --- GPU (optional) ---

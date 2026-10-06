@@ -164,6 +164,42 @@ class Agent:
         """Forget the conversation."""
         self.messages = [{"role": "system", "content": self.system_prompt}]
 
+    def context_use(self) -> dict[str, tuple[int | None, int]]:
+        """The tokens of context the conversation takes up, by kind of
+        message, each with the number of messages (None where that number
+        says nothing). The tokens add up to what the next step starts with;
+        "other" is the chat template's markup around the messages and
+        readerbot's notes to the model (REPLY_CUT_OFF etc.).
+        """
+        count_tokens = self.model.count_tokens
+        notes = (prompts.REPLY_CUT_OFF, prompts.REPLY_INVALID,
+                 prompts.STEP_LIMIT)
+        result_start = prompts.TOOL_RESULT.split("{")[0]
+        kinds = {"your questions": [0, 0], "agent replies": [0, 0],
+                 "tool results": [0, 0]}
+        for message in self.messages[1:]:  # [0] is the system prompt
+            role, content = message["role"], message["content"]
+            if role == "assistant":
+                kind = "agent replies"
+            elif content.startswith(result_start):
+                kind = "tool results"
+            elif content in notes:
+                continue
+            else:
+                kind = "your questions"
+            kinds[kind][0] += 1
+            kinds[kind][1] += count_tokens(content)
+        use: dict[str, tuple[int | None, int]] = {
+            "system prompt and tool list":
+                (None, count_tokens(self.system_prompt)),
+        }
+        for kind, (count, tokens) in kinds.items():
+            use[kind] = (count, tokens)
+        total = count_tokens(self.model.render(self.messages))
+        counted = sum(tokens for _, tokens in use.values())
+        use["other"] = (None, total - counted)
+        return use
+
     def ask(self, question: str, *, verbose: bool = False) -> str | None:
         """Run one turn, printing each step. Returns the answer, or None.
 

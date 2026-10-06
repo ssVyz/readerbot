@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-10-06
+
+### Added
+
+- `/context` shows how much of the model's context the conversation fills:
+  the total, a breakdown into the system prompt and tool list, your
+  questions, the agent's replies, tool results and the rest (the chat
+  template's markup), and how many tokens are left for new messages. The
+  numbers are exact: the conversation is counted just as the next step
+  would send it to the model. Useful to see when it is time for `/reset`,
+  and what fills the context.
+
 ## [0.0.13] - 2026-10-06
 
 ### Changed

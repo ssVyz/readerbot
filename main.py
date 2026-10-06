@@ -19,6 +19,8 @@ from workspace import Workspace
 HELP = """\
 Commands:
   /ls              list the files in the folder
+  /context         show how much of the model's context the conversation
+                   fills
   /verbose <text>  ask as usual, and show every tool result in full,
                    exactly as the model gets it
   /tools           list the tools the model can use
@@ -108,6 +110,8 @@ def repl(agent: Agent) -> None:
             print(HELP)
         elif line == "/ls":
             print(list_folder(agent.workspace))
+        elif line == "/context":
+            print(context_status(agent))
         elif line == "/tools":
             print(agent.tool_list)
         elif line == "/prompt":
@@ -142,6 +146,26 @@ def ask(agent: Agent, question: str, *, verbose: bool = False) -> None:
         return
     if answer is not None:
         print("\n" + ui.paint(answer, ui.ANSWER))
+
+
+def context_status(agent: Agent) -> str:
+    """For /context: how much of the model's context the conversation fills,
+    and how much is left for the next question."""
+    use = agent.context_use()
+    used = sum(tokens for _, tokens in use.values())
+    size = agent.model.context_tokens
+    rows = [f"Context: {used:,} of {size:,} tokens used ({used / size:.0%})."]
+    for kind, (count, tokens) in use.items():
+        label = kind if count is None else f"{kind} ({count})"
+        rows.append(f"  {tokens:>7,}  {label}")
+    reserve = agent.model.max_step_tokens
+    left = size - used - reserve
+    if left > 0:
+        rows.append(f"Left for new messages: {left:,} ({reserve:,} more are "
+                    "kept free for each reply).")
+    else:
+        rows.append("The conversation is full. Type /reset to start over.")
+    return "\n".join(rows)
 
 
 def list_folder(workspace: Workspace) -> str:
