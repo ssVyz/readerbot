@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-10-06
+
+### Added
+
+- Optional GPU inference on NVIDIA GPUs. Set `GPU_LAYERS` in `config.py` to
+  run that many model layers on the GPU (`-1` for all of them); it needs
+  llama-cpp-python built with CUDA, and `README.md` explains the build. It is
+  opt-in: the default `0` and the normal CPU build work exactly as before. If
+  `GPU_LAYERS` is set but the build has no GPU support, readerbot says so at
+  start-up and runs on the CPU. With Qwen3-30B-A3B Q3_K_M on an 8 GB laptop
+  GPU, 20 layers read prompts about 3.8 times and write about 1.5 times as
+  fast as the CPU alone, and need about 6 GB less system RAM.
+- When `GPU_LAYERS` is set, start-up shows how many layers run on the GPU,
+  for example `GPU: 20 of 48 layers`.
+
+### Changed
+
+- With a CUDA build, flash attention is now on. It saves about 2 GB of video
+  memory at 32K context, which leaves room for more layers on the GPU, and
+  reads prompts faster. CPU builds keep it off, as before.
+
 ## [0.0.9] - 2026-10-06
 
 ### Added

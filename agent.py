@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-from llama_cpp import Llama
+from llama_cpp import Llama, llama_supports_gpu_offload
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter
 from llama_cpp.llama_grammar import LlamaGrammar
 
@@ -30,7 +30,13 @@ class Model:
 
     def __init__(self, path: Path) -> None:
         self.name = path.name
-        self.llm = _load(path)
+        # Layers on the GPU (-1: all); 0 when llama.cpp has no GPU support.
+        self.gpu_layers = (config.GPU_LAYERS if llama_supports_gpu_offload()
+                           else 0)
+        self.llm = _load(path, self.gpu_layers)
+        architecture = self.llm.metadata.get("general.architecture", "")
+        self.layer_count = int(self.llm.metadata.get(
+            f"{architecture}.block_count", 0))
         self.context_tokens = self.llm.n_ctx()
         self.max_step_tokens = min(config.STEP_MAX_TOKENS,
                                    self.context_tokens // 4)
@@ -91,16 +97,22 @@ class Model:
             "utf-8", "replace")
 
 
-def _load(path: Path) -> Llama:
+def _load(path: Path, gpu_layers: int) -> Llama:
     # A first, small load reads how much context the model was trained for.
-    # Asking for more makes llama.cpp warn and the output degrade.
+    # Asking for more makes llama.cpp warn and the output degrade. It stays
+    # on the CPU, so the weights are copied to the GPU only once.
     probe = Llama(model_path=str(path), n_ctx=512, verbose=False)
     architecture = probe.metadata.get("general.architecture", "")
     trained = int(probe.metadata.get(f"{architecture}.context_length",
                                      config.CONTEXT_TOKENS))
     probe.close()
+    # With a GPU build, flash attention makes the GPU's scratch memory for
+    # attention much smaller, leaving room for more layers. llama-cpp-python
+    # turns it off unless asked; CPU builds keep it off as before.
     return Llama(model_path=str(path),
-                 n_ctx=min(config.CONTEXT_TOKENS, trained), verbose=False)
+                 n_ctx=min(config.CONTEXT_TOKENS, trained),
+                 n_gpu_layers=gpu_layers,
+                 flash_attn=llama_supports_gpu_offload(), verbose=False)
 
 
 class Agent:

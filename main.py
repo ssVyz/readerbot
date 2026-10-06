@@ -53,6 +53,8 @@ def main() -> None:
         return
 
     print(f"Model:  {model.name} ({model.context_tokens} tokens of context)")
+    if config.GPU_LAYERS:
+        print(f"GPU:    {gpu_status(model)}")
     print(f"Folder: {agent.workspace.folder}")
     if pandoc is None:
         print("pandoc was not found, so .docx files cannot be converted.")
@@ -74,6 +76,16 @@ def choose_model() -> Path | None:
         footer="Arrow keys move, Enter loads the model, q quits.",
     ).present()
     return None if choice is None else models[choice]
+
+
+def gpu_status(model: Model) -> str:
+    """For the start-up summary: how much of the model runs on the GPU."""
+    if model.gpu_layers == 0:
+        return ("not used, because this llama-cpp-python build has no GPU "
+                "support (see README.md)")
+    total = model.layer_count
+    on_gpu = total if model.gpu_layers < 0 else min(model.gpu_layers, total)
+    return f"{on_gpu} of {total} layers"
 
 
 def choose_folder() -> Path | None:

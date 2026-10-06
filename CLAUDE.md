@@ -20,7 +20,7 @@ change. Always follow them; if a task would break one, stop and ask.
 - `prompts.py` — all other model-facing text.
 - `workspace.py` — the file boundary (`Workspace.vet`) and the pandoc call.
 - `guard.py` — audit-hook tripwire against network use and stray programs.
-- `config.py` — settings (context size, step limit, output caps).
+- `config.py` — settings (context size, step limit, GPU layers, output caps).
 - `ui.py` — console colours for user input, agent steps and answers.
 - `minimenu.py` — vendored, self-contained tiny CLI menu library
   (`SelectionMenu`, `CheckboxMenu`, `select_file`; all return `None` when the
@@ -34,8 +34,10 @@ change. Always follow them; if a task would break one, stop and ask.
   for the repo version.
 
 The only dependency is `llama-cpp-python`, which builds from source on install
-(needs the MSVC C++ toolchain on Windows). pandoc must be on `PATH` to convert
-`.docx` files. No test suite yet.
+(needs the MSVC C++ toolchain on Windows). It is a CPU build unless built with
+CUDA, which is opt-in (see `README.md`). With the CPU build and the default
+`GPU_LAYERS = 0` in `config.py` the app must keep working as it does without a
+GPU. pandoc must be on `PATH` to convert `.docx` files. No test suite yet.
 
 ## Repo rules
 
