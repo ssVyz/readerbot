@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-10-06
+
+### Added
+
+- After each answer, readerbot shows how much of the context is still free,
+  for example `(context: 92% free)`, so you no longer need `/context` to
+  see when it is time for `/reset`. It says when the conversation is full.
+  "Free" is the room left for new messages, the same as in `/context`,
+  which now also gives it in percent.
+
 ## [0.0.14] - 2026-10-06
 
 ### Added

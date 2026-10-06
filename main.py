@@ -146,6 +146,12 @@ def ask(agent: Agent, question: str, *, verbose: bool = False) -> None:
         return
     if answer is not None:
         print("\n" + ui.paint(answer, ui.ANSWER))
+    used = sum(tokens for _, tokens in agent.context_use().values())
+    _, share = context_free(agent, used)
+    status = f"(context: {share:.0%} free)"
+    if share == 0:
+        status = "(context: full; type /reset to start over)"
+    print(ui.paint(status, ui.STEP))
 
 
 def context_status(agent: Agent) -> str:
@@ -158,14 +164,23 @@ def context_status(agent: Agent) -> str:
     for kind, (count, tokens) in use.items():
         label = kind if count is None else f"{kind} ({count})"
         rows.append(f"  {tokens:>7,}  {label}")
-    reserve = agent.model.max_step_tokens
-    left = size - used - reserve
+    left, share = context_free(agent, used)
     if left > 0:
-        rows.append(f"Left for new messages: {left:,} ({reserve:,} more are "
-                    "kept free for each reply).")
+        rows.append(f"Left for new messages: {left:,} tokens, {share:.0%} "
+                    f"({agent.model.max_step_tokens:,} more are kept free "
+                    "for each reply).")
     else:
         rows.append("The conversation is full. Type /reset to start over.")
     return "\n".join(rows)
+
+
+def context_free(agent: Agent, used: int) -> tuple[int, float]:
+    """The tokens left for new messages when ``used`` are taken, and that
+    as a share of all the room for messages (0 = full). Each step keeps
+    room for the model's reply, so that does not count as free."""
+    room = agent.model.context_tokens - agent.model.max_step_tokens
+    left = max(0, room - used)
+    return left, left / room
 
 
 def list_folder(workspace: Workspace) -> str:
