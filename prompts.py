@@ -30,7 +30,7 @@ line ranges and sizes.
 - To understand a section that is too long for one read_md call, summarize \
 it with summarize_section instead of reading it. Summarize a few sections \
 to get an overview of a long file. Use read_md only for the parts where \
-you need the exact wording or details, and read at most about 120 lines in \
+you need the exact wording or details, and read at most about 150 lines in \
 one call. Never read a long section or file piece after piece; summarize it \
 instead.
 - To find details, use search_md with one or two key words, then read the \

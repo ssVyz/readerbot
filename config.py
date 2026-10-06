@@ -21,10 +21,10 @@ GPU_LAYERS = 20  # model layers to run on the GPU: 0 = none, -1 = all
 # --- Tools ---
 
 OUTLINE_MAX_HEADINGS = 50  # most headings listed by outline_md
-READ_MAX_CHARS = 6000  # longest read_md result
+READ_MAX_CHARS = 8000  # longest read_md result
 SEARCH_MAX_HITS = 20  # matching lines listed by search_md
 SNIPPET_CHARS = 160  # text shown around each search hit
 SUMMARY_MAX_CHARS = 24000  # most text one summarize_section call takes in
-SUMMARY_MAX_TOKENS = 400  # longest summary it may write
+SUMMARY_MAX_TOKENS = 500  # longest summary it may write
 WRITE_MAX_CHARS = 8000  # most text one create/append/edit call may write
 PANDOC_TIMEOUT_SECONDS = 120

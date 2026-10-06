@@ -360,7 +360,7 @@ READ_MD_DESCRIPTION = (  # MODEL-FACING
     "line range of the section you need from outline_md; do not read a long "
     "file from the start. To learn what a long section says, use "
     "summarize_section instead. "
-    'Example args: {"file": "Report.md", "start_line": 120, "end_line": 185}'
+    'Example args: {"file": "Report.md", "start_line": 110, "end_line": 195}'
 )
 READ_MD_ARGS = _object_schema(  # MODEL-FACING
     file="string", start_line="integer", end_line="integer"
