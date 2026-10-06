@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-10-06
+
+### Added
+
+- New tool `summarize_section`: the agent names a `.md` file and a line
+  range, and gets back a 2-4 sentence summary of those lines. The summary is
+  written by a helper: the same model in a new conversation that sees only
+  these lines, not the agent's conversation. So the agent can learn what a
+  long section says while its own context grows by only the summary, which
+  leaves room for many more steps on long manuscripts. It takes up to 24000
+  characters per call (four times a `read_md` call; `SUMMARY_MAX_CHARS` in
+  `config.py`) and, like `read_md`, says where it stopped if the range is
+  longer. A summary of a 6000-8000 character section takes about 10 s on
+  the laptop GPU.
+- The model's cache of the agent's conversation is saved before a helper
+  runs and restored afterwards. Without this, the step after each summary
+  would have to read the whole conversation again (12 s instead of 1.5 s
+  for a 6000-token conversation). While a helper runs, this takes extra
+  RAM: roughly 0.1 MB per token of conversation with Qwen3-30B-A3B.
+
+### Changed
+
+- The system prompt now tells the agent to summarize sections that are too
+  long for one `read_md` call instead of reading them, to get an overview
+  of a long file from a few summaries, and to use `read_md` only for exact
+  details, at most about 120 lines at a time. Answers may now be based on
+  summaries, but numbers, names and quotes must still come from lines read
+  with `read_md`.
+- `outline_md` (and so `convert_docx`) now notes when sections are longer
+  than one `read_md` call and points to `summarize_section`.
+- When `read_md` stops at its size limit, it now offers `summarize_section`
+  next to reading on. Before, it only suggested the next line range, which
+  led the agent to read long sections piece after piece.
+- Each tool call is now shown when it starts instead of when it has
+  finished, because a summary takes a few seconds.
+
 ## [0.0.11] - 2026-10-06
 
 ### Added

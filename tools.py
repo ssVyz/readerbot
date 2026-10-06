@@ -9,6 +9,8 @@ How a tool is built:
   written, so the agent only reaches .docx/.md files in the chosen folder.
 - The result is MODEL-FACING too. Its first line is a one-line summary that
   is also shown to the user.
+- A tool that hands text to a helper model (``uses_helper=True`` in TOOLS)
+  takes an ``AskHelper`` right after the workspace.
 """
 
 import re
@@ -18,7 +20,15 @@ from pathlib import Path
 from typing import Any
 
 import config
+import prompts
 from workspace import WRITABLE, RefusedError, Workspace
+
+# Asks a helper: the same model in a new conversation that sees nothing of
+# the agent's, only a system message and a user message (agent.Model.
+# ask_helper). Takes the two messages and the most tokens to write; returns
+# the reply and whether it was cut off, or None if it does not fit the
+# model's context.
+AskHelper = Callable[[str, str, int], tuple[str, bool] | None]
 
 
 @dataclass(frozen=True)
@@ -27,6 +37,7 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     function: Callable[..., str]
+    uses_helper: bool = False
 
 
 # --- Helpers ---
@@ -71,6 +82,19 @@ def _split_lines(text: str) -> list[str]:
 def _char_count(lines: list[str], start: int, end: int) -> int:
     """Characters in lines start to end (counting from 1), with newlines."""
     return sum(len(line) + 1 for line in lines[start - 1:end])
+
+
+def _clip_range(name: str, total: int, start_line: int,
+                end_line: int) -> int:
+    """Check a line range from the model; return end_line, cut to the file."""
+    if start_line < 1 or end_line < start_line:
+        raise RefusedError(
+            "start_line must be 1 or more, and end_line must not "
+            "be smaller than start_line"
+        )
+    if start_line > total:
+        raise RefusedError(f"{name} has only {total} lines")
+    return min(end_line, total)
 
 
 def _check_new_text(text: str) -> None:
@@ -210,15 +234,21 @@ def _outline(name: str, lines: list[str]) -> str:
                     f"({_char_count(lines, 1, first - 1)} characters): "
                     "text before the first heading")
     width = config.SNIPPET_CHARS
+    largest = 0
     for index in shown[:cap]:
         start, level, line = headings[index]
         # A section ends before the next heading of the same or a higher level.
         end = next((number - 1 for number, other, _ in headings[index + 1:]
                     if other <= level), total)
+        size = _char_count(lines, start, end)
+        largest = max(largest, size)
         title = line[:width] + "..." if len(line) > width else line
-        rows.append(f"  lines {start}-{end} "
-                    f"({_char_count(lines, start, end)} characters): {title}")
+        rows.append(f"  lines {start}-{end} ({size} characters): {title}")
     notes = ""
+    if largest > config.READ_MAX_CHARS:
+        notes += (f"\n[Sections over {config.READ_MAX_CHARS} characters do "
+                  "not fit in one read_md call. Summarize them with "
+                  "summarize_section, then read only the lines you need.]")
     if guessed:
         notes += ("\n[The file has no Markdown headings, so these were "
                   "guessed: lines in bold from start to end, and lines that "
@@ -257,6 +287,69 @@ def _find_headings(
     return headings, True
 
 
+# === TOOL: summarize_section ===============================================
+# Access: reads one .md file. The lines go to a helper (see AskHelper), which
+# sees nothing but them and prompts.SUMMARIZE_SYSTEM; its summary is the
+# result.
+
+SUMMARIZE_SECTION_DESCRIPTION = (  # MODEL-FACING
+    "Summarize lines start_line to end_line (inclusive, counting from 1) of "
+    "a .md file in 2-4 sentences. A helper reads the lines for you, so they "
+    "do not fill up your memory; it sees nothing but these lines. Use this "
+    "to learn what a long section says, then read only the lines with the "
+    "details you need with read_md. At most about "
+    f"{config.SUMMARY_MAX_CHARS} characters are summarized per call. "
+    'Example args: {"file": "Report.md", "start_line": 75, "end_line": 136}'
+)
+SUMMARIZE_SECTION_ARGS = _object_schema(  # MODEL-FACING
+    file="string", start_line="integer", end_line="integer"
+)
+
+
+def summarize_section(workspace: Workspace, ask_helper: AskHelper, file: str,
+                      start_line: int, end_line: int) -> str:
+    path = workspace.vet(file, (".md",), exists=True)
+    lines = _split_lines(_read_text(path))
+    total = len(lines)
+    if total == 0:
+        return f"{path.name} is empty."
+    end_line = _clip_range(path.name, total, start_line, end_line)
+
+    # Whole lines up to the cap; only a single longer line is cut.
+    cap = config.SUMMARY_MAX_CHARS
+    last = start_line
+    used = len(lines[start_line - 1]) + 1
+    while last < end_line and used + len(lines[last]) + 1 <= cap:
+        used += len(lines[last]) + 1
+        last += 1
+    text = "\n".join(lines[start_line - 1:last])
+    if not text.strip():
+        return f"Lines {start_line}-{last} of {path.name} are blank."
+
+    reply = ask_helper(prompts.SUMMARIZE_SYSTEM,
+                       prompts.SUMMARIZE_TEXT.format(text=text[:cap]),
+                       config.SUMMARY_MAX_TOKENS)
+    if reply is None:
+        raise RefusedError(
+            f"lines {start_line}-{last} are too long for this model to "
+            "summarize at once; try about half as many lines"
+        )
+    summary, cut_off = reply
+    header = (f"Summary of {path.name}, lines {start_line}-{last} of "
+              f"{total}, by a helper that read only these lines:")
+    notes = ""
+    if cut_off:
+        notes += "\n[The summary was cut off at its length limit.]"
+    if len(text) > cap:
+        notes += (f"\n[Line {start_line} is longer than {cap} characters; "
+                  "only its start was summarized.]")
+    if last < end_line:
+        notes += (f"\n[Stopped after line {last} to stay under {cap} "
+                  f"characters. Summarize the rest with start_line="
+                  f"{last + 1}.]")
+    return header + "\n" + summary.strip() + notes
+
+
 # === TOOL: read_md =========================================================
 # Access: reads one .md file.
 
@@ -265,7 +358,8 @@ READ_MD_DESCRIPTION = (  # MODEL-FACING
     "file. Each line comes with its number. At most about "
     f"{config.READ_MAX_CHARS} characters are returned per call. Take the "
     "line range of the section you need from outline_md; do not read a long "
-    "file from the start. "
+    "file from the start. To learn what a long section says, use "
+    "summarize_section instead. "
     'Example args: {"file": "Report.md", "start_line": 120, "end_line": 185}'
 )
 READ_MD_ARGS = _object_schema(  # MODEL-FACING
@@ -280,14 +374,7 @@ def read_md(workspace: Workspace, file: str, start_line: int,
     total = len(lines)
     if total == 0:
         return f"{path.name} is empty."
-    if start_line < 1 or end_line < start_line:
-        raise RefusedError(
-            "start_line must be 1 or more, and end_line must not "
-            "be smaller than start_line"
-        )
-    if start_line > total:
-        raise RefusedError(f"{path.name} has only {total} lines")
-    end_line = min(end_line, total)
+    end_line = _clip_range(path.name, total, start_line, end_line)
 
     cap = config.READ_MAX_CHARS
     rows: list[str] = []
@@ -297,7 +384,9 @@ def read_md(workspace: Workspace, file: str, start_line: int,
         row = f"{number:>5} | {lines[number - 1]}"
         if rows and used + len(row) > cap:
             note = (f"\n[Stopped after line {number - 1} to stay under {cap} "
-                    f"characters. Continue with start_line={number}.]")
+                    "characters. If you need the exact text, continue with "
+                    f"start_line={number}; to learn what the rest says, "
+                    "summarize it with summarize_section.]")
             break
         if len(row) > cap:
             row = row[:cap] + " [rest of this line cut]"
@@ -452,6 +541,8 @@ TOOLS = [
     Tool("convert_docx", CONVERT_DOCX_DESCRIPTION, CONVERT_DOCX_ARGS,
          convert_docx),
     Tool("outline_md", OUTLINE_MD_DESCRIPTION, OUTLINE_MD_ARGS, outline_md),
+    Tool("summarize_section", SUMMARIZE_SECTION_DESCRIPTION,
+         SUMMARIZE_SECTION_ARGS, summarize_section, uses_helper=True),
     Tool("read_md", READ_MD_DESCRIPTION, READ_MD_ARGS, read_md),
     Tool("search_md", SEARCH_MD_DESCRIPTION, SEARCH_MD_ARGS, search_md),
     Tool("create_md", CREATE_MD_DESCRIPTION, CREATE_MD_ARGS, create_md),
@@ -463,13 +554,22 @@ _TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 _ARG_TYPES = {"string": (str, "a string"), "integer": (int, "an integer")}
 
 
-def run_tool(workspace: Workspace, name: str, args: object) -> str:
-    """Run one tool call from the model; errors come back as text."""
+def run_tool(workspace: Workspace, name: str, args: object,
+             ask_helper: AskHelper | None = None) -> str:
+    """Run one tool call from the model; errors come back as text.
+
+    Tools that use a helper are refused without ``ask_helper``.
+    """
     try:
         tool = _TOOLS_BY_NAME.get(name)
         if tool is None:
             raise RefusedError(f"there is no tool called {name!r}")
-        return tool.function(workspace, **_checked_args(tool, args))
+        checked = _checked_args(tool, args)
+        if not tool.uses_helper:
+            return tool.function(workspace, **checked)
+        if ask_helper is None:
+            raise RefusedError(f"{name} cannot be used here")
+        return tool.function(workspace, ask_helper, **checked)
     except RefusedError as error:
         return f"ERROR: {error}"
     except OSError as error:

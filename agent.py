@@ -3,6 +3,8 @@
 A question starts a turn. In each step the model replies with one JSON
 object, forced by a grammar built from tools.TOOLS: either a tool call,
 which is run and its result sent back, or the answer, which ends the turn.
+Some tools hand a piece of a document to a helper: the same model in a new
+conversation that sees nothing else (Model.ask_helper).
 """
 
 import json
@@ -73,17 +75,39 @@ class Model:
     def count_tokens(self, prompt: str) -> int:
         return len(self._tokenize(prompt))
 
-    def complete(self, prompt: str, grammar: LlamaGrammar) -> tuple[str, bool]:
+    def complete(self, prompt: str, grammar: LlamaGrammar | None,
+                 max_tokens: int) -> tuple[str, bool]:
         """Generate one reply. Returns the text and whether it was cut off."""
         result = self.llm.create_completion(
             self._tokenize(prompt),
             grammar=grammar,
-            max_tokens=self.max_step_tokens,
+            max_tokens=max_tokens,
             temperature=config.TEMPERATURE,
             stop=self._stop,
         )
         choice = result["choices"][0]  # type: ignore[index]
         return choice["text"], choice["finish_reason"] == "length"
+
+    def ask_helper(self, system: str, user: str,
+                   max_tokens: int) -> tuple[str, bool] | None:
+        """Reply to a new conversation of just these two messages, in plain
+        text. Returns the reply and whether it was cut off, or None if the
+        conversation does not fit the context. This is tools.AskHelper.
+        """
+        prompt = self.render([{"role": "system", "content": system},
+                              {"role": "user", "content": user}])
+        if self.count_tokens(prompt) + max_tokens > self.context_tokens:
+            return None
+        # The model keeps the agent's conversation in its cache, so each step
+        # only reads what is new. Without saving the cache here, the next
+        # step would read the whole conversation again (12 s for 6000 tokens
+        # on a laptop GPU). Saving it takes about 1 s and, while the helper
+        # runs, roughly 0.1 MB of memory per token (Qwen3-30B-A3B).
+        saved = self.llm.save_state()
+        try:
+            return self.complete(prompt, None, max_tokens)
+        finally:
+            self.llm.load_state(saved)
 
     def _tokenize(self, prompt: str) -> list[int]:
         # The rendered template already holds any begin-of-text token.
@@ -175,7 +199,8 @@ class Agent:
             _show(f"  step {step} ...", end="")
             started = time.perf_counter()
             grammar = self._answer_grammar if last_step else self._step_grammar
-            raw, cut_off = self.model.complete(prompt, grammar)
+            raw, cut_off = self.model.complete(prompt, grammar,
+                                               self.model.max_step_tokens)
             seconds = time.perf_counter() - started
             if cut_off:
                 _show(f"\r  step {step} ({seconds:.1f} s): reply too long, "
@@ -200,9 +225,11 @@ class Agent:
                 return str(reply["answer"])
 
             name, args = reply["tool"], reply["args"]
-            result = tools.run_tool(self.workspace, name, args)
-            message = prompts.TOOL_RESULT.format(name=name, result=result)
+            # Shown before it runs: a tool that asks a helper takes a while.
             _show(f"    -> {name}({_format_args(args)})")
+            result = tools.run_tool(self.workspace, name, args,
+                                    self.model.ask_helper)
+            message = prompts.TOOL_RESULT.format(name=name, result=result)
             if verbose:
                 print(message, flush=True)
             else:

@@ -14,7 +14,8 @@ change. Always follow them; if a task would break one, stop and ask.
 `readerbot` — a Python 3.13 project managed with [uv](https://docs.astral.sh/uv/).
 
 - `main.py` — entry point: start-up menus (model, then folder) and the REPL.
-- `agent.py` — the model (chat template, output grammar) and the agent loop.
+- `agent.py` — the model (chat template, output grammar), the agent loop,
+  and the helper calls some tools make (`Model.ask_helper`).
 - `tools.py` — every tool the agent can use; its `TOOLS` registry is the
   complete list.
 - `prompts.py` — all other model-facing text.
