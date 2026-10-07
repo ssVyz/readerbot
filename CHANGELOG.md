@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-10-07
+
+### Added
+
+- New tool `ask_section`: the agent names a `.md` file, a line range and a
+  question, and gets back answers with line numbers. Helpers read the lines
+  (the same model in new conversations that see only their part and the
+  question), so the agent's context grows by only the answers. A long range,
+  even a whole file, is split into parts of up to 24000 characters, ending
+  before a heading where possible, and each part goes to its own helper; at
+  most 6 parts per call, and the result says where it stopped
+  (`ASK_PART_CHARS`, `ASK_MAX_PARTS` in `config.py`). Parts without an
+  answer are listed in one line. This finds things a summary leaves out
+  and `search_md` misses when the agent does not know the exact words, such
+  as the one sentence saying which AI tools were used. Helpers can be wrong,
+  so the result reminds the agent to check exact details with `read_md`.
+  If a part does not fit a model's context, it is split again. On the
+  laptop GPU, a question about a whole 31000-character manuscript (two
+  parts) took 20-42 s.
+
+### Changed
+
+- The system prompt now tells the agent to ask its questions with
+  `ask_section`, with an example of asking about a whole file, instead of
+  going through a file section by section, and to use `summarize_section`
+  only for an overview, because summaries leave out details. Without this
+  the agent kept summarizing section after section to look for one detail:
+  asked whether AI tools were used, it summarized six sections and wrongly
+  answered "no". Now it asks the whole file once, checks the lines it gets
+  with `read_md` and answers correctly, in 70 s instead of about 2 minutes.
+  Searching is now for words and names, with `ask_section` to try before
+  deciding that something is not in a file. The notes of `outline_md`
+  (about sections too long for one read) and of `read_md` (when it stops at
+  its size limit) and the `read_md` description now name both tools.
+- Each helper is now shown as it works, under the tool call, with the lines
+  it reads and how long it took, for example
+  `helper read lines 1-136 (11.6 s)`. This also applies to
+  `summarize_section`; what it returns to the agent is unchanged.
+- The cache of the agent's conversation is now saved once per tool call
+  instead of once per helper, which saves about a second per helper when one
+  `ask_section` call asks several.
+
 ## [0.0.15] - 2026-10-06
 
 ### Added

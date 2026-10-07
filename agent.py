@@ -9,10 +9,12 @@ conversation that sees nothing else (Model.ask_helper).
 
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from llama_cpp import Llama, llama_supports_gpu_offload
+from llama_cpp import Llama, LlamaState, llama_supports_gpu_offload
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter
 from llama_cpp.llama_grammar import LlamaGrammar
 
@@ -57,6 +59,7 @@ class Model:
         ])
         self._stop = probe.stop
         self.has_system_role = _PROBE in probe.prompt
+        self._saved_state: LlamaState | None = None  # see ask_helper
 
     def render(self, messages: list[Message]) -> str:
         """Return the exact prompt text the model sees for ``messages``."""
@@ -92,7 +95,7 @@ class Model:
                    max_tokens: int) -> tuple[str, bool] | None:
         """Reply to a new conversation of just these two messages, in plain
         text. Returns the reply and whether it was cut off, or None if the
-        conversation does not fit the context. This is tools.AskHelper.
+        conversation does not fit the context. Call it inside keeping_cache.
         """
         prompt = self.render([{"role": "system", "content": system},
                               {"role": "user", "content": user}])
@@ -101,13 +104,22 @@ class Model:
         # The model keeps the agent's conversation in its cache, so each step
         # only reads what is new. Without saving the cache here, the next
         # step would read the whole conversation again (12 s for 6000 tokens
-        # on a laptop GPU). Saving it takes about 1 s and, while the helper
-        # runs, roughly 0.1 MB of memory per token (Qwen3-30B-A3B).
-        saved = self.llm.save_state()
+        # on a laptop GPU). Saving it takes about 1 s and, until it is
+        # restored, roughly 0.1 MB of memory per token (Qwen3-30B-A3B).
+        if self._saved_state is None:
+            self._saved_state = self.llm.save_state()
+        return self.complete(prompt, None, max_tokens)
+
+    @contextmanager
+    def keeping_cache(self) -> Iterator[None]:
+        """Restore the cache of the agent's conversation at the end of the
+        block. All helpers asked in it share one saved copy."""
         try:
-            return self.complete(prompt, None, max_tokens)
+            yield
         finally:
-            self.llm.load_state(saved)
+            if self._saved_state is not None:
+                self.llm.load_state(self._saved_state)
+                self._saved_state = None
 
     def _tokenize(self, prompt: str) -> list[int]:
         # The rendered template already holds any begin-of-text token.
@@ -263,8 +275,9 @@ class Agent:
             name, args = reply["tool"], reply["args"]
             # Shown before it runs: a tool that asks a helper takes a while.
             _show(f"    -> {name}({_format_args(args)})")
-            result = tools.run_tool(self.workspace, name, args,
-                                    self.model.ask_helper)
+            with self.model.keeping_cache():
+                result = tools.run_tool(self.workspace, name, args,
+                                        self._ask_helper)
             message = prompts.TOOL_RESULT.format(name=name, result=result)
             if verbose:
                 print(message, flush=True)
@@ -273,6 +286,19 @@ class Agent:
             self.messages.append({"role": "user", "content": message})
         print("  Stopped: the model did not answer within the step limit.")
         return None
+
+    def _ask_helper(self, system: str, user: str, max_tokens: int,
+                    label: str) -> tuple[str, bool] | None:
+        """tools.AskHelper: Model.ask_helper, shown to the user as it runs."""
+        _show(f"       helper reads {label} ...", end="")
+        started = time.perf_counter()
+        reply = self.model.ask_helper(system, user, max_tokens)
+        if reply is None:
+            _show(f"\r       {label}: too long for the model's context")
+        else:
+            seconds = time.perf_counter() - started
+            _show(f"\r       helper read {label} ({seconds:.1f} s)")
+        return reply
 
 
 def _step_schema(answer_only: bool) -> dict[str, Any]:

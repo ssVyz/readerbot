@@ -25,10 +25,10 @@ from workspace import WRITABLE, RefusedError, Workspace
 
 # Asks a helper: the same model in a new conversation that sees nothing of
 # the agent's, only a system message and a user message (agent.Model.
-# ask_helper). Takes the two messages and the most tokens to write; returns
-# the reply and whether it was cut off, or None if it does not fit the
-# model's context.
-AskHelper = Callable[[str, str, int], tuple[str, bool] | None]
+# ask_helper). Takes the two messages, the most tokens to write and what the
+# helper reads, for the user (like "lines 1-80"); returns the reply and
+# whether it was cut off, or None if it does not fit the model's context.
+AskHelper = Callable[[str, str, int, str], tuple[str, bool] | None]
 
 
 @dataclass(frozen=True)
@@ -82,6 +82,11 @@ def _split_lines(text: str) -> list[str]:
 def _char_count(lines: list[str], start: int, end: int) -> int:
     """Characters in lines start to end (counting from 1), with newlines."""
     return sum(len(line) + 1 for line in lines[start - 1:end])
+
+
+def _numbered(number: int, line: str) -> str:
+    """A line with its number in front, as read_md shows it."""
+    return f"{number:>5} | {line}"
 
 
 def _clip_range(name: str, total: int, start_line: int,
@@ -247,8 +252,9 @@ def _outline(name: str, lines: list[str]) -> str:
     notes = ""
     if largest > config.READ_MAX_CHARS:
         notes += (f"\n[Sections over {config.READ_MAX_CHARS} characters do "
-                  "not fit in one read_md call. Summarize them with "
-                  "summarize_section, then read only the lines you need.]")
+                  "not fit in one read_md call. Ask about them with "
+                  "ask_section or summarize them with summarize_section, "
+                  "then read only the lines you need.]")
     if guessed:
         notes += ("\n[The file has no Markdown headings, so these were "
                   "guessed: lines in bold from start to end, and lines that "
@@ -328,7 +334,7 @@ def summarize_section(workspace: Workspace, ask_helper: AskHelper, file: str,
 
     reply = ask_helper(prompts.SUMMARIZE_SYSTEM,
                        prompts.SUMMARIZE_TEXT.format(text=text[:cap]),
-                       config.SUMMARY_MAX_TOKENS)
+                       config.SUMMARY_MAX_TOKENS, f"lines {start_line}-{last}")
     if reply is None:
         raise RefusedError(
             f"lines {start_line}-{last} are too long for this model to "
@@ -350,6 +356,160 @@ def summarize_section(workspace: Workspace, ask_helper: AskHelper, file: str,
     return header + "\n" + summary.strip() + notes
 
 
+# === TOOL: ask_section =====================================================
+# Access: reads one .md file. The lines are split into parts, and each part
+# goes to its own helper (see AskHelper), which sees nothing but that part,
+# the question and prompts.ASK_SYSTEM. Their answers are the result.
+
+ASK_SECTION_DESCRIPTION = (  # MODEL-FACING
+    "Ask a question about lines start_line to end_line (inclusive, counting "
+    "from 1) of a .md file. Helpers read the lines for you and answer from "
+    "them with line numbers, so the text does not fill up your memory. A "
+    "long range, even a whole file, is split into parts of about "
+    f"{config.ASK_PART_CHARS} characters, each read by its own helper (at "
+    f"most {config.ASK_MAX_PARTS} parts per call). The helpers see nothing "
+    "but their part and your question, so ask a clear question that makes "
+    "sense on its own; you may say what to list or look for. Use this to "
+    "find what a file or section says about something when you do not know "
+    "the exact words to search for. "
+    'Example args: {"file": "Report.md", "start_line": 1, "end_line": 400, '
+    '"question": "Which software was used for the analysis, and which '
+    'version?"}'
+)
+ASK_SECTION_ARGS = _object_schema(  # MODEL-FACING
+    file="string", start_line="integer", end_line="integer",
+    question="string"
+)
+
+
+def ask_section(workspace: Workspace, ask_helper: AskHelper, file: str,
+                start_line: int, end_line: int, question: str) -> str:
+    path = workspace.vet(file, (".md",), exists=True)
+    question = question.strip()
+    if not question:
+        raise RefusedError("question must not be empty")
+    if len(question) > 500:
+        raise RefusedError("question is limited to 500 characters")
+    lines = _split_lines(_read_text(path))
+    total = len(lines)
+    if total == 0:
+        return f"{path.name} is empty."
+    end_line = _clip_range(path.name, total, start_line, end_line)
+
+    cap = config.ASK_PART_CHARS
+    todo = _parts(lines, start_line, end_line, cap)
+    # The parts read: (first line, last line, answer or "" for none).
+    answers: list[tuple[int, int, str]] = []
+    notes = []
+    while todo and len(answers) < config.ASK_MAX_PARTS:
+        first, last = todo.pop(0)
+        if not any(line.strip() for line in lines[first - 1:last]):
+            answers.append((first, last, ""))
+            continue
+        text = "\n".join(_numbered(number, lines[number - 1])
+                         for number in range(first, last + 1))
+        reply = ask_helper(
+            prompts.ASK_SYSTEM,
+            prompts.ASK_TEXT.format(text=text[:cap], question=question),
+            config.ASK_MAX_TOKENS, f"lines {first}-{last}")
+        if reply is None:  # too long for the model's context: split it
+            if first < last:
+                todo[:0] = _parts(lines, first, last, len(text) // 2 + 1)
+            else:
+                notes.append(f"[Line {first} is too long for this model to "
+                             "read, so it was left out.]")
+            continue
+        answer, cut_off = reply
+        answer = answer.strip()
+        words = re.sub(r"[\W_]+", " ", answer).strip().upper()
+        if not words or words == prompts.ASK_NOT_FOUND:
+            answer = ""
+        elif cut_off:
+            answer += " [cut off at its length limit]"
+        if len(text) > cap:
+            notes.append(f"[Line {first} is longer than {cap} characters; "
+                         "only its start was read.]")
+        answers.append((first, last, answer))
+    read_to = todo[0][0] - 1 if todo else end_line
+    if not answers:
+        raise RefusedError(f"lines {start_line}-{read_to} are too long for "
+                           "this model to read")
+
+    lines_read = f"lines {start_line}-{read_to} of {total} in {path.name}"
+    found = [(first, last, answer) for first, last, answer in answers
+             if answer]
+    count = len(answers)
+    if count == 1:
+        header = (f"Answer from a helper that read only {lines_read}:"
+                  if found else f"No answer in {lines_read}, says a helper "
+                  "that read only these lines.")
+        rows = [answer for _, _, answer in found]
+    elif found:
+        noun = "Answer" if len(found) == 1 else "Answers"
+        header = (f"{noun} from {len(found)} of {count} helpers that each "
+                  f"read one part of {lines_read}:")
+        rows = [f"Lines {first}-{last}: {answer}"
+                for first, last, answer in found]
+        missing = [f"{first}-{last}" for first, last, answer in answers
+                   if not answer]
+        if missing:
+            rows.append(f"No answer in lines {', '.join(missing)}.")
+    else:
+        header = (f"No answer in {lines_read}, say {count} helpers that each "
+                  "read one part.")
+        rows = []
+    if todo:
+        notes.append(f"[Stopped after line {read_to}: one call reads at most "
+                     f"{config.ASK_MAX_PARTS} parts. Ask again with "
+                     f"start_line={read_to + 1} for the rest.]")
+    if found:
+        notes.append("[Helpers can be wrong. Check exact details such as "
+                     "numbers, names and quotes with read_md at the lines "
+                     "they give.]")
+    else:
+        notes.append("[A helper can miss things. Before you decide that "
+                     "something is not there, try search_md with key "
+                     "words.]")
+    return "\n".join([header, *rows, *notes])
+
+
+def _parts(lines: list[str], start: int, end: int,
+           cap: int) -> list[tuple[int, int]]:
+    """Split lines start to end into parts of at most ``cap`` characters as
+    numbered lines; return the first and last line of each. A part ends
+    before a heading if one comes in its second half, or else after a blank
+    line there, so that sections stay together. A longer line is a part of
+    its own."""
+    headings = {number for number, _, _ in _find_headings(lines)[0]}
+    parts = []
+    first = start
+    while first <= end:
+        last, used = first, len(_numbered(first, lines[first - 1])) + 1
+        while last < end:
+            size = len(_numbered(last + 1, lines[last])) + 1
+            if used + size > cap:
+                break
+            last, used = last + 1, used + size
+        if last < end:
+            # Look back over the second half for a better line to start the
+            # next part at; size is the part's size if it starts there.
+            size, better = used, None
+            for number in range(last + 1, first, -1):
+                if size < cap // 2:
+                    break
+                if number in headings:
+                    better = number
+                    break
+                if better is None and not lines[number - 2].strip():
+                    better = number
+                size -= len(_numbered(number - 1, lines[number - 2])) + 1
+            if better is not None:
+                last = better - 1
+        parts.append((first, last))
+        first = last + 1
+    return parts
+
+
 # === TOOL: read_md =========================================================
 # Access: reads one .md file.
 
@@ -359,7 +519,7 @@ READ_MD_DESCRIPTION = (  # MODEL-FACING
     f"{config.READ_MAX_CHARS} characters are returned per call. Take the "
     "line range of the section you need from outline_md; do not read a long "
     "file from the start. To learn what a long section says, use "
-    "summarize_section instead. "
+    "ask_section or summarize_section instead. "
     'Example args: {"file": "Report.md", "start_line": 110, "end_line": 195}'
 )
 READ_MD_ARGS = _object_schema(  # MODEL-FACING
@@ -381,12 +541,12 @@ def read_md(workspace: Workspace, file: str, start_line: int,
     used = 0
     note = ""
     for number in range(start_line, end_line + 1):
-        row = f"{number:>5} | {lines[number - 1]}"
+        row = _numbered(number, lines[number - 1])
         if rows and used + len(row) > cap:
             note = (f"\n[Stopped after line {number - 1} to stay under {cap} "
                     "characters. If you need the exact text, continue with "
-                    f"start_line={number}; to learn what the rest says, "
-                    "summarize it with summarize_section.]")
+                    f"start_line={number}; to learn what the rest says, use "
+                    "ask_section or summarize_section.]")
             break
         if len(row) > cap:
             row = row[:cap] + " [rest of this line cut]"
@@ -566,6 +726,8 @@ TOOLS = [
     Tool("convert_docx", CONVERT_DOCX_DESCRIPTION, CONVERT_DOCX_ARGS,
          convert_docx),
     Tool("outline_md", OUTLINE_MD_DESCRIPTION, OUTLINE_MD_ARGS, outline_md),
+    Tool("ask_section", ASK_SECTION_DESCRIPTION, ASK_SECTION_ARGS,
+         ask_section, uses_helper=True),
     Tool("summarize_section", SUMMARIZE_SECTION_DESCRIPTION,
          SUMMARIZE_SECTION_ARGS, summarize_section, uses_helper=True),
     Tool("read_md", READ_MD_DESCRIPTION, READ_MD_ARGS, read_md),
